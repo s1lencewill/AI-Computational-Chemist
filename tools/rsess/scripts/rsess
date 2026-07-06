@@ -1,0 +1,333 @@
+#!/usr/bin/env bash
+# rsess — persistent remote shell sessions backed by tmux running ON THE REMOTE.
+#
+# Design (see SKILL.md for the full rationale):
+#   * The tmux server + an interactive login shell live on the REMOTE host.
+#     All shell state (cwd, env, venvs) persists there across calls.
+#   * The local machine is only a STATELESS control channel: every operation is
+#     `ssh <target> "<tmux> <subcommand>"`. If ssh drops, the call fails
+#     CLEANLY — it can never fall back to and run on the local machine.
+#   * ssh connections are multiplexed (ControlMaster) so repeated control
+#     calls reuse one connection; a dropped master silently reopens.
+#   * A "target" is any ssh destination — a `Host` alias from ~/.ssh/config,
+#     `user@host`, etc. All connection details (ProxyJump, Port, Identity,
+#     ControlMaster) live in standard ssh config. rsess stays connection-
+#     agnostic and therefore general/publishable.
+#   * `run` injects a command into the persistent interactive pane shell and
+#     captures it via per-command files + a `tmux wait-for` signal — no
+#     log-scraping, real exit codes, multi-line/heredoc safe (commands are
+#     shipped base64 and sourced).
+#
+# Local state:  $RSESS_HOME (default ~/.rsess)
+#   config            optional, sourced (sh syntax) for prefs + target aliases
+#   cm/               ssh ControlMaster sockets
+#   sessions/<s>.meta per-session metadata (target, topic, tmux bin/socket, …)
+# Remote state: ~/.rsess on the remote
+#   logs/<s>.log      full pane transcript (pipe-pane)
+#   runs/<s>/<id>.{cmd,out,rc}  clean per-command capture (kept as logs)
+
+set -uo pipefail
+
+# Resolve our own real location, following symlinks (so `rsess` can be symlinked
+# onto PATH while still finding the bundled tmux next to the real script).
+_self="${BASH_SOURCE[0]}"
+while [ -L "$_self" ]; do
+  _dir="$(cd "$(dirname "$_self")" && pwd)"
+  _self="$(readlink "$_self")"
+  case "$_self" in /*) ;; *) _self="$_dir/$_self" ;; esac
+done
+SCRIPT_DIR="$(cd "$(dirname "$_self")" && pwd)"
+BUNDLED_TMUX="$SCRIPT_DIR/tmux"
+
+RSESS_HOME="${RSESS_HOME:-$HOME/.rsess}"
+CONFIG="$RSESS_HOME/config"
+CM_DIR="$RSESS_HOME/cm"
+META_DIR="$RSESS_HOME/sessions"
+
+# Defaults (overridable in $CONFIG)
+RSESS_SOCKET="${RSESS_SOCKET:-rsess}"          # remote tmux -L socket (isolates from admin tmux)
+RSESS_REMOTE_DIR="${RSESS_REMOTE_DIR:-.rsess}" # under remote $HOME
+RSESS_REMOTE_BIN="${RSESS_REMOTE_BIN:-.bin/tmux}" # uploaded-binary path under remote $HOME
+RSESS_TIMEOUT="${RSESS_TIMEOUT:-120}"          # seconds for a run to finish
+RSESS_CONTROL_PERSIST="${RSESS_CONTROL_PERSIST:-60s}"
+RSESS_MIN_TMUX="${RSESS_MIN_TMUX:-1.8}"        # minimum acceptable system tmux
+
+mkdir -p "$CM_DIR" "$META_DIR"
+# shellcheck disable=SC1090
+[ -f "$CONFIG" ] && . "$CONFIG"
+
+die()  { echo "rsess: $*" >&2; exit 1; }
+warn() { echo "rsess: $*" >&2; }
+
+# ---- ssh plumbing -----------------------------------------------------------
+ssh_opts() {
+  printf '%s\0' \
+    -o ControlMaster=auto \
+    -o "ControlPath=$CM_DIR/%C" \
+    -o "ControlPersist=$RSESS_CONTROL_PERSIST" \
+    -o BatchMode=yes \
+    -o ConnectTimeout=20
+}
+# ssh_t <target> <remote-cmd...>   — run a remote command, stdin passed through
+ssh_t() {
+  local target="$1"; shift
+  local -a opts=(); local o
+  while IFS= read -r -d '' o; do opts+=("$o"); done < <(ssh_opts)
+  ssh "${opts[@]}" "$target" "$@"
+}
+
+# ---- target aliases (optional convenience over ssh config) ------------------
+# In $CONFIG you may define:  rsess_alias_<name>="<ssh-destination>"
+resolve_target() {
+  local t="$1" var
+  var="rsess_alias_${t//[^A-Za-z0-9_]/_}"
+  if [ -n "${!var:-}" ]; then printf '%s' "${!var}"; else printf '%s' "$t"; fi
+}
+
+# ---- metadata ---------------------------------------------------------------
+meta_file() { printf '%s/%s.meta' "$META_DIR" "$1"; }
+meta_get()  { local k="$2"; sed -n "s/^$k=//p" "$(meta_file "$1")" 2>/dev/null | tail -1; }
+meta_put()  { # <session> k=v ...
+  local s="$1"; shift; local f; f="$(meta_file "$s")"
+  { for kv in "$@"; do echo "$kv"; done; } >>"$f"
+}
+
+# Resolve the remote tmux launcher (e.g. "tmux -L rsess" or "~/.bin/tmux -L rsess")
+session_tmux() { # <session>  -> echoes the tmux command prefix
+  local s="$1" bin
+  bin="$(meta_get "$s" tmuxbin)"; [ -n "$bin" ] || bin="tmux"
+  printf '%s -L %s' "$bin" "$(meta_get "$s" socket)"
+}
+
+rand_hash() { LC_ALL=C tr -dc 'a-f0-9' </dev/urandom 2>/dev/null | head -c 6; }
+
+# ---- tmux availability ------------------------------------------------------
+# Echoes the usable remote tmux binary token, or empty if none.
+detect_remote_tmux() { # <target>
+  local target="$1"
+  ssh_t "$target" '
+    ver() { "$1" -V 2>/dev/null | awk "{print \$2}"; }
+    ge()  { [ "$(printf "%s\n%s\n" "$1" "$2" | sort -V | head -1)" = "$2" ]; }
+    if command -v tmux >/dev/null 2>&1 && ge "$(ver tmux)" "'"$RSESS_MIN_TMUX"'"; then
+      echo "tmux"
+    elif [ -x "$HOME/'"$RSESS_REMOTE_BIN"'" ]; then
+      echo "$HOME/'"$RSESS_REMOTE_BIN"'"
+    else
+      echo ""
+    fi'
+}
+
+cmd_probe() {
+  [ $# -ge 1 ] || die "usage: rsess probe <target>"
+  local target; target="$(resolve_target "$1")"
+  echo "target: $target"
+  local sysver arch home tbin
+  sysver="$(ssh_t "$target" 'tmux -V 2>/dev/null || echo "(none)"')" || die "cannot reach $target over ssh"
+  arch="$(ssh_t "$target" 'uname -m 2>/dev/null')"
+  tbin="$(detect_remote_tmux "$target")"
+  echo "remote arch: $arch"
+  echo "system tmux: $sysver  (min required: $RSESS_MIN_TMUX)"
+  echo "bundled-binary present: $([ -x "$HOME/$RSESS_REMOTE_BIN" ] && echo yes || echo n/a)"
+  if [ -n "$tbin" ]; then
+    echo "usable tmux: $tbin -L $RSESS_SOCKET"
+  else
+    echo "usable tmux: NONE — open with --upload-tmux to install the bundled static binary to ~/$RSESS_REMOTE_BIN"
+    echo "             (bundled binary is linux x86-64; remote arch is '$arch')"
+  fi
+}
+
+upload_tmux() { # <target> -> echoes installed path token
+  local target="$1" arch
+  [ -x "$BUNDLED_TMUX" ] || die "bundled tmux not found at $BUNDLED_TMUX"
+  arch="$(ssh_t "$target" 'uname -m 2>/dev/null')"
+  case "$arch" in
+    x86_64|amd64) : ;;
+    *) die "bundled tmux is linux x86-64 but remote arch is '$arch'; provide a matching binary" ;;
+  esac
+  ssh_t "$target" "mkdir -p \"\$HOME/$(dirname "$RSESS_REMOTE_BIN")\"" || die "cannot create remote bin dir"
+  ssh_t "$target" "cat > \"\$HOME/$RSESS_REMOTE_BIN\" && chmod 755 \"\$HOME/$RSESS_REMOTE_BIN\"" < "$BUNDLED_TMUX" \
+    || die "upload failed"
+  ssh_t "$target" "\"\$HOME/$RSESS_REMOTE_BIN\" -V" >/dev/null 2>&1 || die "uploaded tmux not runnable on remote"
+  printf '%s' "\$HOME/$RSESS_REMOTE_BIN"
+}
+
+# ---- open -------------------------------------------------------------------
+cmd_open() {
+  local upload=0
+  [ "${1:-}" = "--upload-tmux" ] && { upload=1; shift; }
+  [ $# -ge 2 ] || die "usage: rsess open [--upload-tmux] <topic> <target>"
+  local topic="$1"; local target; target="$(resolve_target "$2")"
+  local safe="${topic//[^A-Za-z0-9_-]/-}"
+  local sess="rsess-${safe}-$(rand_hash)"
+
+  # ensure ssh reachable
+  ssh_t "$target" true || die "cannot reach target '$target' over ssh (check ~/.ssh/config)"
+
+  local tbin; tbin="$(detect_remote_tmux "$target")"
+  if [ -z "$tbin" ]; then
+    if [ "$upload" -eq 1 ]; then
+      warn "no usable tmux on '$target' — uploading bundled static binary to ~/$RSESS_REMOTE_BIN"
+      tbin="$(upload_tmux "$target")"
+    else
+      die "no usable tmux on '$target'. Re-run: rsess open --upload-tmux $topic $2"
+    fi
+  fi
+  local TM="$tbin -L $RSESS_SOCKET"
+
+  # create detached session running the remote login shell; set a roomy pane;
+  # start full-transcript logging; create the per-run dir.
+  ssh_t "$target" "
+    set -e
+    mkdir -p \"\$HOME/$RSESS_REMOTE_DIR/logs\" \"\$HOME/$RSESS_REMOTE_DIR/runs/$sess\"
+    $TM new-session -d -s '$sess' -x 220 -y 50
+    $TM set-option -t '$sess' -g history-limit 100000 >/dev/null 2>&1 || true
+    $TM pipe-pane -t '$sess' \"cat >> \\\"\$HOME/$RSESS_REMOTE_DIR/logs/$sess.log\\\"\"
+  " || die "failed to start remote tmux session"
+
+  meta_put "$sess" \
+    "target=$target" "topic=$topic" "tmuxbin=$tbin" "socket=$RSESS_SOCKET" \
+    "created=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+  touch_meta "$sess"
+  echo "rsess: session '$sess' ready on $target"
+  echo "       transcript: ~/$RSESS_REMOTE_DIR/logs/$sess.log   runs: ~/$RSESS_REMOTE_DIR/runs/$sess/"
+}
+
+touch_meta() { meta_put "$1" "lastused=$(date -u +%Y-%m-%dT%H:%M:%SZ)"; }
+
+need_session() {
+  local s="$1"; [ -f "$(meta_file "$s")" ] || die "unknown session '$s' (rsess list)"
+  local target; target="$(meta_get "$s" target)"
+  ssh_t "$target" "$(session_tmux "$s") has-session -t '$s'" 2>/dev/null \
+    || die "session '$s' is not alive on $target (it may have been killed / host rebooted)"
+}
+
+# ---- run --------------------------------------------------------------------
+cmd_run() {
+  [ $# -ge 2 ] || die "usage: rsess run <session> <cmd...>"
+  local s="$1"; shift
+  local cmd="$*"
+  need_session "$s"
+  local target TM rdir id
+  target="$(meta_get "$s" target)"; TM="$(session_tmux "$s")"
+  rdir="\$HOME/$RSESS_REMOTE_DIR/runs/$s"
+  id="$(rand_hash)$(rand_hash)"
+
+  # 1) ship the command body (base64) to a file in the persistent pane's view
+  printf '%s' "$cmd" | base64 | tr -d '\n' \
+    | ssh_t "$target" "base64 -d > $rdir/$id.cmd" \
+    || die "failed to stage command"
+
+  # 2) inject the runner into the interactive pane shell. The command is SOURCED
+  #    (state persists), output+rc captured to files, then a wait-for channel is
+  #    signalled. Sent literally (-l) so the shell — not tmux — interprets it.
+  local runner="{ . $rdir/$id.cmd; printf %s \"\$?\" > $rdir/$id.rc; } > $rdir/$id.out 2>&1; $TM wait -S rsess-$id"
+  ssh_t "$target" "$TM send-keys -t '$s' -l -- $(qq "$runner"); $TM send-keys -t '$s' Enter" \
+    || die "failed to inject command"
+
+  # 3) block until the pane signals completion (or timeout)
+  if ! ssh_t "$target" "timeout $RSESS_TIMEOUT $TM wait rsess-$id" 2>/dev/null; then
+    warn "TIMEOUT after ${RSESS_TIMEOUT}s in '$s' (command still running). Last pane lines:"
+    ssh_t "$target" "$TM capture-pane -t '$s' -p -S -40" >&2 || true
+    touch_meta "$s"; return 124
+  fi
+  touch_meta "$s"
+
+  # 4) stream output faithfully (no $() trailing-newline stripping), then rc
+  local rc
+  ssh_t "$target" "cat $rdir/$id.out 2>/dev/null"
+  rc="$(ssh_t "$target" "cat $rdir/$id.rc 2>/dev/null")"
+  return "${rc:-0}"
+}
+
+# shell-quote a single argument for safe embedding in a remote command string
+qq() { printf "'%s'" "${1//\'/\'\\\'\'}"; }
+
+# ---- send / peek ------------------------------------------------------------
+cmd_send() {
+  [ $# -ge 2 ] || die "usage: rsess send <session> <keys...>"
+  local s="$1"; shift
+  need_session "$s"
+  local target; target="$(meta_get "$s" target)"
+  ssh_t "$target" "$(session_tmux "$s") send-keys -t '$s' $(for k in "$@"; do qq "$k"; printf ' '; done) Enter"
+  touch_meta "$s"
+}
+
+cmd_peek() {
+  [ $# -ge 1 ] || die "usage: rsess peek <session> [lines]"
+  local s="$1" n="${2:-120}"
+  local target; target="$(meta_get "$s" target)"; [ -n "$target" ] || die "unknown session '$s'"
+  ssh_t "$target" "$(session_tmux "$s") capture-pane -t '$s' -p -S -$n"
+}
+
+# ---- list / close / gc ------------------------------------------------------
+cmd_list() {
+  local f s alive
+  shopt -s nullglob
+  local any=0
+  for f in "$META_DIR"/*.meta; do
+    any=1; s="$(basename "$f" .meta)"
+    local target topic created last
+    target="$(meta_get "$s" target)"; topic="$(meta_get "$s" topic)"
+    created="$(meta_get "$s" created)"; last="$(meta_get "$s" lastused)"
+    if ssh_t "$target" "$(session_tmux "$s") has-session -t '$s'" 2>/dev/null; then alive="up"; else alive="DEAD"; fi
+    printf '%-34s  %-5s  %-22s  topic=%s  last=%s\n' "$s" "$alive" "$target" "$topic" "$last"
+  done
+  [ "$any" -eq 1 ] || echo "(no rsess sessions)"
+}
+
+cmd_close() {
+  [ $# -ge 1 ] || die "usage: rsess close <session> [--purge-logs]"
+  local s="$1" purge=0; [ "${2:-}" = "--purge-logs" ] && purge=1
+  local target; target="$(meta_get "$s" target)"; [ -n "$target" ] || die "unknown session '$s'"
+  local TM; TM="$(session_tmux "$s")"
+  ssh_t "$target" "$TM kill-session -t '$s' 2>/dev/null; rm -rf \"\$HOME/$RSESS_REMOTE_DIR/runs/$s\"; \
+    $([ "$purge" -eq 1 ] && echo "rm -f \"\$HOME/$RSESS_REMOTE_DIR/logs/$s.log\";") true" || true
+  rm -f "$(meta_file "$s")"
+  echo "rsess: closed '$s'$([ "$purge" -eq 1 ] && echo " (logs purged)")"
+}
+
+cmd_gc() { # prune dead sessions from local manifest
+  local f s target
+  shopt -s nullglob
+  for f in "$META_DIR"/*.meta; do
+    s="$(basename "$f" .meta)"; target="$(meta_get "$s" target)"
+    if ! ssh_t "$target" "$(session_tmux "$s") has-session -t '$s'" 2>/dev/null; then
+      echo "gc: pruning dead session '$s' ($target)"; rm -f "$f"
+    fi
+  done
+}
+
+usage() {
+  cat <<'EOF'
+rsess — persistent remote shell sessions, tmux running ON THE REMOTE.
+
+  rsess probe  <target>                      report remote tmux availability/version
+  rsess open   [--upload-tmux] <topic> <target>
+                                             open a new per-topic session; prints its name
+  rsess run    <session> <cmd...>            run cmd in the session, return stdout+stderr+exit
+  rsess send   <session> <keys...>           send raw keys + Enter (daemons, REPLs, C-c)
+  rsess peek   <session> [lines]             capture last N lines of the pane (default 120)
+  rsess list                                 list sessions (+ alive/dead)
+  rsess close  <session> [--purge-logs]      kill session + remove run files (keeps log unless --purge-logs)
+  rsess gc                                   prune locally-tracked sessions that are dead remotely
+
+target = any ssh destination (a ~/.ssh/config Host alias, user@host, …); all
+connection details (ProxyJump, Port, Identity, ControlMaster) live in ssh config.
+
+Env / $RSESS_HOME/config: RSESS_SOCKET (tmux -L name), RSESS_TIMEOUT,
+RSESS_REMOTE_DIR, RSESS_REMOTE_BIN, RSESS_MIN_TMUX, rsess_alias_<name>=<dest>.
+EOF
+}
+
+case "${1:-}" in
+  probe)  shift; cmd_probe "$@" ;;
+  open)   shift; cmd_open "$@" ;;
+  run)    shift; cmd_run "$@" ;;
+  send)   shift; cmd_send "$@" ;;
+  peek)   shift; cmd_peek "$@" ;;
+  list)   shift; cmd_list "$@" ;;
+  close)  shift; cmd_close "$@" ;;
+  gc)     shift; cmd_gc "$@" ;;
+  -h|--help|help|"") usage ;;
+  *) echo "rsess: unknown command '$1'" >&2; usage; exit 1 ;;
+esac

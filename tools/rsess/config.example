@@ -1,0 +1,49 @@
+# rsess config — copy to ~/.rsess/config (sourced as POSIX sh).
+# Everything here is OPTIONAL; sane defaults apply if the file is absent.
+
+# --- rsess preferences -------------------------------------------------------
+# RSESS_SOCKET=rsess           # remote `tmux -L <socket>` name (isolates rsess
+#                              # sessions from any admin/user tmux on the host)
+# RSESS_TIMEOUT=120            # seconds `run` waits before reporting a timeout
+# RSESS_REMOTE_DIR=.rsess      # logs/run files dir under the remote $HOME
+# RSESS_REMOTE_BIN=.bin/tmux   # where --upload-tmux puts the bundled binary
+# RSESS_MIN_TMUX=1.8           # minimum acceptable system tmux version
+# RSESS_CONTROL_PERSIST=60s    # ssh ControlMaster keep-alive after last use
+
+# --- optional target aliases -------------------------------------------------
+# A convenience layer over ssh: `rsess open <topic> <alias>` expands the alias
+# to an ssh destination. Prefer putting real connection details in ~/.ssh/config
+# (HostName/User/Port/ProxyJump/IdentityFile) and just naming the Host here.
+#
+#   rsess_alias_web="alice@203.0.113.10"
+#   rsess_alias_db="behind-jump"          # a ~/.ssh/config Host with ProxyJump
+
+# --- example: reaching hosts via a jump / reverse tunnel ---------------------
+# rsess itself needs NO special code for jumps — express them in ~/.ssh/config.
+# For a reverse-tunnel setup where a bastion forwards each host's sshd to a
+# loopback port on the bastion, a ~/.ssh/config entry looks like:
+#
+#   Host site-a
+#       HostName 127.0.0.1
+#       Port 2222
+#       User myuser
+#       ProxyJump jumpuser@bastion.example.com
+#       StrictHostKeyChecking no
+#       UserKnownHostsFile /dev/null
+#
+# then:  rsess open site-a-debug site-a
+#
+# A second hop (host reached *through* another tunneled host) is just a
+# comma-separated ProxyJump:
+#       ProxyJump jumpuser@bastion.example.com,root@127.0.0.1:2200
+#
+# --- parametrized targets (random/temporary ports or IPs) --------------------
+# When the port or IP changes every time, use a WILDCARD Host pattern whose
+# ProxyCommand slices the variable out of the alias name — written once, it
+# matches every value. e.g. `rsess open <topic> t-<port>` for any <port>:
+#
+#   Host t-*
+#       User myuser
+#       StrictHostKeyChecking no
+#       UserKnownHostsFile /dev/null
+#       ProxyCommand sh -c 'exec ssh -W 127.0.0.1:"${1#t-}" jumpuser@bastion.example.com' _ %h
