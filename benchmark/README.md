@@ -50,7 +50,7 @@ labelled by the git commit of the case data they scored:
 
 | Run folder | Evaluator | Mean weighted totals (HUMAN / AI-GPT5.5 / AI-GPT5.5-FU) |
 |---|---|---|
-| `evaluations/evaluation-v2-a312cf8b-gpt5.5xhigh` | GPT-5.5 (high reasoning effort) | 54.7 / 65.5 / 72.2 |
+| `evaluations/evaluation-v2-a312cf8b-gpt5.5xhigh` | GPT-5.5 (xhigh reasoning effort) | 54.7 / 65.5 / 72.2 |
 | `evaluations/evaluation-v2-a312cf8b-fable5` | Claude (Fable 5) | 72.6 / 64.8 / 69.8 |
 
 Each run contains five per-case rating files (`rating_case<N>.md`) and an
