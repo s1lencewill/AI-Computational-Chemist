@@ -1,5 +1,7 @@
 # AI Computational Chemist (AICC)
 
+[English](README.md) | [简体中文](README.zh-CN.md)
+
 A harness-neutral skill framework for reproducible computational chemistry and
 materials-science workflows.
 
