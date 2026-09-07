@@ -1,148 +1,366 @@
 # AI Computational Chemist (AICC)
 
-Agent skills for computational chemistry and materials science.
+A harness-neutral skill framework for reproducible computational chemistry and
+materials-science workflows.
 
-Building blocks for **semi-automatic computational research driven by peer review**. Given an original manuscript and the reviewers' comments asking for computational work, an AI agent uses this collection to triage which comments require calculations, run them consistently with the manuscript's own methods (or — for purely experimental manuscripts with no prior calculations — with a user-approved method designed around the experimental characterization), validate whether each result actually addresses the concern, and draft response-letter and SI material — with human approval at every scientific decision point.
+AICC helps an AI agent turn a scientific request into a traceable workflow: identify
+the calculation, preserve the source method, prepare inputs, obtain human approval,
+run locally or on an HPC system, validate the outputs, and assemble report-ready
+evidence. It supports Claude Code, Codex, Cursor, opencode, DSH, and custom agent loops
+that can discover `SKILL.md` instructions.
 
-The skills are also usable standalone for general computational chemistry work (DFT, quantum chemistry, MD, machine-learning potentials, phonons, microkinetics, HPC execution). Harness-neutral: works with any agent that can read instruction files — Claude Code, Codex, Cursor, opencode, or a custom agent loop.
+The project is designed around two rules:
 
-## Flagship workflow
+1. calculations must follow the manuscript, literature, or explicitly approved method;
+2. scheduler success is not scientific success—results become reportable only after
+   parser, convergence, provenance, and scientific acceptance gates pass.
 
-```text
-manuscript + SI + reviews (+ original calculation archive)
-  -> review-response: method fingerprint + comment triage    [human approves the plan]
-  -> per-comment calculations (comp-chem-workflow + engine skills)
-  -> validation against each reviewer's concern
-  -> response package: letter paragraphs, SI tables/figures  [human approves the draft]
-```
+## Architecture
 
-Two hard rules make it trustworthy: new calculations must match the manuscript's method fingerprint (or disclose the deviation), and results that *contradict* the manuscript stop automation and go to the authors — never buried, never spun.
-
-## Research orchestration layer
-
-For larger projects, `procedures/research-orchestrator/` adds a machine-readable control plane on top of the individual skills. A project becomes a task DAG under `.research/`, with explicit dependencies, claims, required checks, decisions, events, and artifact provenance. This is the layer used for multi-agent planning and critique, resumable handoffs, and final report assembly.
-
-The project state is intentionally separate from the scientific and tool knowledge:
-
-- `.research/project.yaml` records project metadata, assumptions, approvals, and high-level status.
-- `.research/tasks/*.yaml` records task nodes: dependencies, success criteria, `skill`, `required_refs`, `knowledge_required`, `required_checks`, and output artifacts.
-- `.research/artifacts.jsonl`, `decisions.jsonl`, and `events.jsonl` preserve evidence, reasoning decisions, and workflow history.
-- `.research/leases/*.json` prevents multiple agents from owning the same expensive execution task.
-
-Routing stays flexible. A task's `skill` field can point to `vasp`, `cp2k`, `gaussian`, `lammps`, `structure-prep`, `hpc-submit`, `report`, or another appropriate skill; VASP is not hard-coded into the orchestration layer. Scientific background is requested separately through `knowledge_required`, so tasks can pull in `knowledge/electrochemistry.md`, `knowledge/electronic-structure.md`, `knowledge/scientific-visualization.md`, or other references without turning them into executable tools.
-
-The helper scripts in `procedures/research-orchestrator/scripts/` enforce the protocol: initialize project state, validate schemas, list ready tasks, claim/release/heartbeat leases, reconcile stale ownership, run required checks, classify claims, accept artifacts, and scaffold report manifests. The key safety rule is that `completed`, `validated`, and `accepted` are different states; final reports should consume accepted claims by default.
-
-Structure modeling has its own review gate inside this orchestration layer. For slabs,
-surfaces, defects, adsorbates, molecules on surfaces, and supported clusters, the task
-DAG should separate surface-literature review, `structure-prep` generation, and
-read-only structure criticism. The critic checks Miller index and termination precedent,
-slab a/b size, vacuum, fixed layers, closest contacts, adsorbate-surface distance, and
-periodic-image separation before VASP/CP2K/Gaussian/LAMMPS or HPC tasks consume the
-structure. For very niche materials or unusual modifications, no direct literature
-precedent is acceptable when the search scope is recorded and the model is labeled
-exploratory; the gate then focuses on internal geometric and chemical plausibility.
-
-## Layout
+The Agent does not need to run on the compute server.
 
 ```text
-AGENTS.md                      global guardrails + routing (load into every session)
-STRUCTURE.md                   the organization convention (read before adding content)
-procedures/                    orchestrators - how work is driven (agent skills)
-  review-response/             flagship: manuscript + reviews -> validated response package
-  comp-chem-workflow/          lifecycle controller: state tracking, validation ladder, approval breakpoints
-  literature-to-calculation/   third-party paper / SI / report -> concrete calculation target
-  research-orchestrator/       machine-readable project state: task DAG, artifacts, decisions, ready/blocked
-knowledge/                     tool-agnostic science + practice (flat reference library; not skills)
-  machine-learning-potentials.md MLP concepts and cross-code comparison
-  electrochemistry.md          CHE step diagrams, SHE/RHE/pH corrections, constant-potential concepts
-tools/                         per-code skills - how each tool is operated
-  structure-prep/              periodic (pymatgen) + molecular (RDKit) structure preparation
-  vasp/                        static, relax, electronic, reaction/NEB, CHE/VASPsol/VASPsol++ electrochemistry
-  cp2k/                        Quickstep GPW/GAPW, opt/cell-opt, MD, electronic analysis
-  gaussian/                    molecular QC: SP, opt, freq, TS, IRC, solvation
-  multiwfn/                    molecular wavefunction analysis, charges, orbitals/NTOs, spectra
-  gromacs/                     biomolecular, liquid, membrane, ligand, MARTINI, and GROMACS analysis workflows
-  lammps/                      classical / reactive / MLP-driven MD
-  mlp/                         MLP concepts and cross-program routing: MACE, NequIP, GPUMD, LASP, GemNet-OC, EquiformerV2
-  deepmd/                      DeePMD-kit datasets, training, inference, validation, DP-GEN-style workflows
-  phonopy/                     finite-displacement phonon workflows
-  vaspkit/                     VASP helper input generation and post-processing
-  catmap/                      microkinetic modeling, TOF maps, volcano plots
-  lobster/                     LOBSTER COHP/COOP bonding analysis from VASP wavefunctions
-  ovito/                       atomistic visualization and trajectory analysis
-  hpc-submit/                  local / SSH / Slurm / PBS execution
-  remote-compute/              local MCP -> agentless SSH/Slurm/PBS execution
-  rsess/                       persistent remote shell sessions (tmux on the remote)
-  report/                      assemble the near-submission .docx report / response package
-benchmark/                     the peer-review-replication benchmark (cases, rubric, evaluations)
+Windows workstation
+  DSH / Codex / Claude
+          |
+          | discovers AICC skills and records .research state
+          v
+  local remote-compute MCP gateway
+          |
+          | OpenSSH/SCP: bounded files and generated operations only
+          v
+Linux compute server
+  SSH + GNU tools + Slurm/PBS + scientific codes
+  no Agent, no MCP service, no model API key
 ```
 
-The three top-level kinds are distinct: **procedures/** drive multi-step work, **tools/** operate a specific code, **knowledge/** is tool-agnostic science and practice the others draw on (read it for ideas, adapt freely — it is not a skill). Program families can have both layers: for example `knowledge/machine-learning-potentials.md` explains MLP concepts across DeePMD, MACE, NequIP, GPUMD, LASP, GemNet-OC, and EquiformerV2, while `tools/deepmd/` contains DeePMD-kit-specific commands and validation; `knowledge/force-fields.md` and `knowledge/molecular-dynamics.md` explain classical MD model choice, sampling, and trajectory interpretation, while `tools/gromacs/` and `tools/lammps/` contain engine-specific setup and validation; `knowledge/electrochemistry.md` explains CHE/constant-potential concepts, while `tools/vasp/references/electrochemistry.md` contains VASP/VASPsol execution details. Every procedure/tool skill follows the same structure (see `STRUCTURE.md`): `SKILL.md` is a short table of contents; detail lives in `references/` (`running.md`, `validation.md`, `errors.md`, `resources.md`, plus topic files), verified worked cases in `examples/`, and deterministic helpers in `scripts/` (preflight checks and output parsers that exit non-zero on failure). Each skill owns its full life cycle — setup, preflight, error recovery, and output parsing; the cross-engine validation ladder lives in `comp-chem-workflow`.
+Skills carry scientific and operational knowledge. The local MCP gateway supplies a
+narrow execution capability. `.research/` remains the durable control-plane record on
+the workstation, while the scheduler and calculation files remain on the execution
+plane.
 
-## Installation
+## What AICC provides
 
-Use the installer for normal setup:
+- peer-review response workflows from manuscript and referee comments to validated
+  response-letter and SI material;
+- machine-readable research orchestration with task DAGs, decisions, artifacts,
+  events, leases, and acceptance gates;
+- engine skills for VASP, CP2K, Gaussian, GROMACS, LAMMPS, DeePMD, phonopy, CatMAP,
+  LOBSTER, Multiwfn, VASPKIT, OVITO, and related workflows;
+- structure preparation and independent structure-review gates;
+- local, scheduler, persistent-shell, and agentless remote execution modes;
+- deterministic preflight checks and parsers that fail loudly instead of silently
+  treating incomplete calculations as results.
+
+## Choose an execution mode
+
+| Situation | Use | Agent on server? |
+|---|---|---:|
+| calculation runs on the same machine as the Agent | engine skill + `hpc-submit` | already local |
+| normal SSH/Slurm/PBS job dispatched from Windows | `remote-compute` + `hpc-submit` | no |
+| interactive investigation needs persistent shell state or `tmux` | `rsess` + `hpc-submit` | no |
+| organization deliberately deploys its harness on the cluster | native engine/HPC skills | yes |
+
+Use `remote-compute` for the normal agentless path. It exposes specific operations for
+target discovery, staging, submission, status, bounded logs, artifact hashing,
+retrieval, and cancellation. It deliberately exposes no arbitrary-shell tool.
+
+## Quick start: skills only
+
+Install the collection into the skill directory used by your harness:
 
 ```bash
 ./install.sh --target ~/.codex/skills
 ./install.sh --target ~/.claude/skills --harness claude --project /path/to/work
 ```
 
-The installer deploys this skill collection only. It does not install VASP, VASPKIT, OVITO, Gaussian, GROMACS, LAMMPS, pseudopotentials, basis sets, or licensed data.
+The installer deploys the skills only. It does not install scientific codes,
+pseudopotentials, basis sets, licensed data, schedulers, or container images.
 
-**Runtime for helper scripts** — install [`uv`](https://docs.astral.sh/uv/). The Python helpers in `scripts/` that need third-party packages (pymatgen, rdkit, ovito) declare those deps inline (PEP 723) and are run with `uv run script.py …`: uv resolves a **per-script** isolated, cached environment, so tools with conflicting requirements never clash and there is no host-environment to match. Pure-stdlib helpers (output parsers, preflight checks) need nothing beyond Python.
+For a manual installation:
 
-uv fetches deps from the index only on a **cache miss**; once an env is built it is reused with no network. On **unstable-internet or air-gapped sites**, warm the cache once where there is connectivity, then run with `uv run --offline …` (or `UV_OFFLINE=1`) — nothing is fetched at run time, so a flaky link or an offline node can't stall a job. On **HPC**, point `UV_CACHE_DIR` at a shared filesystem and warm it on the login node; compute nodes then reuse the same per-tool envs offline.
+- Claude Code: make `procedures/*/` and `tools/*/` discoverable under a Claude skill
+  directory and load `AGENTS.md` as the project instruction;
+- Codex or another `AGENTS.md`-aware harness: keep `AGENTS.md` at the working-project
+  root and copy or link the skill directories into its skill location;
+- another agent loop: use each skill's frontmatter `description` for routing and load
+  `AGENTS.md` as a system or project instruction.
 
-**`uv run` is the preferred path**; PyPI has fast regional mirrors too, so point uv at one with `UV_DEFAULT_INDEX` where the default index is slow. **conda/mamba is the fallback** — the scripts run against any interpreter that has the deps, so a prepared conda/mamba env works (then just `python script.py`); reach for it when a package installs more reliably from conda-forge (notably **ovito**, which is conda-blessed via its own channel) or when uv/PyPI is blocked. Region-specific mirror URLs (PyPI or conda-forge) are site config — record them in your `~/.cluster-agents.md`, never in this repo.
+`knowledge/` is a flat reference library, not a set of skills. Do not install each
+knowledge file as an independent tool.
 
-Manual install for **Claude Code** - symlink the skill directories and the instruction file:
+## Quick start: Windows DSH to a compute server
 
-```bash
-ln -s "$(pwd)"/procedures/* "$(pwd)"/tools/* ~/.claude/skills/   # or .claude/skills/ inside a project
-ln -s "$(pwd)"/AGENTS.md CLAUDE.md                               # in the project where you work
+### 1. Prepare local prerequisites
+
+- Python 3.11 or newer; on this workstation use the modern Miniconda environment rather
+  than a legacy Python 3.6 environment;
+- Windows OpenSSH `ssh.exe` and `scp.exe`;
+- a tested OpenSSH alias with non-interactive key or SSH-agent authentication;
+- the server fingerprint already verified and present in `known_hosts`.
+
+The remote server needs GNU-compatible `sh`, `sha256sum`, `stat`, `find`, `realpath`,
+`tail`, and `mv`, plus Slurm or PBS and the required scientific codes.
+
+### 2. Create a private gateway configuration
+
+Copy the example outside the repository:
+
+```powershell
+Copy-Item `
+  .\tools\remote-compute\examples\config.example.json `
+  "$env:USERPROFILE\.dsh\remote-compute.private.json"
 ```
 
-(`knowledge/` is a flat reference library, not skills — don't symlink it as a skill; the skills point into it.)
+Replace the placeholders and set narrow project directories for:
 
-Manual install for **Codex / AGENTS.md-native harnesses** - `AGENTS.md` is read automatically from the working directory; symlink or copy the `procedures/` and `tools/` directories into the harness's skill location.
+- `allowedUploadRoots`—prepared job bundles;
+- `allowedDownloadRoots`—retrieved results;
+- `allowedResearchRoots`—projects whose `.research/decisions.jsonl` may authorize
+  submission or cancellation;
+- `remoteRoot`—the only remote job tree the gateway may address.
 
-**Any other agent** — load `AGENTS.md` as a system/project instruction and make `procedures/*/SKILL.md` and `tools/*/SKILL.md` discoverable (the frontmatter `description` is the routing key).
+Keep `submitEnabled` and `cancelEnabled` set to `false` during initial setup. Never
+commit this private file.
 
-**Site setup (required before running calculations)** — every environment is different, so the collection never assumes yours. The agent learns a cluster in three tiers (full rules in `AGENTS.md` "Site environment"): (1) a tiny **local bootstrap** — just how to connect and transfer files — that you provide once (a small file, your agent's memory, or taught interactively); (2) the **login banner/MOTD** it reads on connecting; (3) an operating guide **`~/.cluster-agents.md` in your home directory on the cluster** — partitions, modules, code paths, job templates, quotas — authored once on the machine so every later session and teammate inherits it. Fill `~/.cluster-agents.md` from `tools/hpc-submit/references/cluster-guide-template.md`, or let the agent draft it after probing the cluster. Connection facts stay on your machine; nothing site-specific ever enters this repo.
+Validate it without connecting:
 
-**Agentless remote execution** — `tools/remote-compute/` adds a stdio MCP gateway that
-runs on the operator workstation and dispatches bounded, hash-verified job operations
-through OpenSSH/SCP. DSH, Codex, Claude Code, or another local MCP client can share the
-same private target policy. The compute server needs only OpenSSH, POSIX tools, the
-scheduler, computational codes, and optional copied checker/parser scripts: no Harness,
-LLM Agent, inbound MCP service, or model API key. Submission and cancellation are
-disabled per target until explicitly enabled. Start with
-`tools/remote-compute/references/configuration.md`.
+```powershell
+C:\Users\REPLACE_USER\miniconda3\python.exe `
+  .\tools\remote-compute\scripts\remote_compute_mcp.py `
+  --config "$env:USERPROFILE\.dsh\remote-compute.private.json" `
+  --check-config
+```
+
+### 3. Register the MCP gateway in DSH
+
+Merge
+[`tools/remote-compute/examples/dsh-sci.cordis.example.yml`](tools/remote-compute/examples/dsh-sci.cordis.example.yml)
+into the user-owned `sci` preset and replace every `REPLACE_*` value. Do not edit a
+shipped preset.
+
+DSH exposes tools such as:
+
+```text
+mcp__aicc-compute__compute_list_targets
+mcp__aicc-compute__compute_probe_target
+mcp__aicc-compute__compute_stage_job
+mcp__aicc-compute__compute_submit_job
+mcp__aicc-compute__compute_get_status
+mcp__aicc-compute__compute_fetch_artifact
+```
+
+The same stdio server can be registered in Codex, Claude Code, or another MCP client.
+See the complete client examples in
+[`tools/remote-compute/references/configuration.md`](tools/remote-compute/references/configuration.md).
+
+### 4. Qualify the connection read-only
+
+Before enabling submission:
+
+1. call `compute_list_targets`;
+2. call `compute_probe_target` for a configured alias;
+3. call `compute_read_cluster_guide` and register its size and SHA-256 as provenance;
+4. stage a harmless bundle with a new job ID;
+5. verify the staging manifest and remote directory;
+6. only then enable submission for that one target and run a minimal scheduler job.
+
+Failure never falls back to local execution. A missing alias, SSH error, changed
+manifest, approval mismatch, or scheduler failure remains a visible error.
+
+### 5. Record approval for the exact staged bundle
+
+After `compute_stage_job` returns `manifest_sha256`, obtain human approval and append an
+approval decision to the project's `.research/decisions.jsonl`:
+
+```json
+{"decision_id":"D-HPC-001","task_id":"T004","kind":"approval","decision":"approved","by":"user","approval_type":"expensive_hpc_submission","manifest_sha256":"<exact staging SHA-256>","reason":"Approved after reviewing target, method, and expected cost.","created_at":"2026-09-07T12:00:00+08:00"}
+```
+
+`compute_submit_job` requires that exact decision, task, approval type, and manifest
+hash. A superseded or reusable generic approval is rejected. Cancellation requires a
+different `remote_job_cancellation` decision bound to the exact `scheduler_job_id`.
+
+The gateway also creates a remote submission marker before calling the scheduler, so
+an interrupted SSH response cannot silently cause an automatic duplicate submission.
+
+## Flagship workflow
+
+```text
+manuscript + SI + reviews (+ original calculation archive)
+  -> review-response: method fingerprint + comment triage
+  -> human approval of calculation plan
+  -> per-comment calculations: comp-chem-workflow + engine skills
+  -> parser, convergence, provenance, and scientific validation
+  -> response letter + SI tables/figures
+  -> human approval of final draft
+```
+
+New calculations match the manuscript's method fingerprint unless a deviation is
+explicitly justified and approved. A result that contradicts the manuscript stops the
+workflow and returns to the authors; it is never hidden or reframed as confirmation.
+
+## Research orchestration
+
+`procedures/research-orchestrator/` adds a machine-readable control plane for larger or
+multi-agent projects:
+
+- `.research/project.yaml`—project metadata, policy, assumptions, and overall status;
+- `.research/tasks/*.yaml`—task dependencies, skills, required references, checks,
+  success criteria, and outputs;
+- `.research/artifacts.jsonl`—artifact identity, provenance, hashes, validation, and
+  acceptance;
+- `.research/decisions.jsonl`—human approvals and scientific decisions;
+- `.research/events.jsonl`—append-only workflow and recovery history;
+- `.research/leases/*.json`—exclusive ownership of expensive or stateful tasks.
+
+The state transitions are intentionally distinct:
+
+```text
+completed -> validated -> accepted -> reportable
+```
+
+A scheduler's `COMPLETED` state satisfies none of the scientific gates by itself.
+Engine parsers and critics must establish convergence and relevance before reports
+consume the result.
+
+Structure modeling has an independent review boundary. Surface, defect, adsorbate,
+slab, and supported-cluster tasks separate literature precedent, structure generation,
+and read-only criticism before an expensive engine task can consume the model.
+
+Agentless job receipts, scheduler IDs, hashes, approval references, and retrieval state
+are described in
+[`procedures/research-orchestrator/references/remote-execution.md`](procedures/research-orchestrator/references/remote-execution.md).
+
+## Repository layout
+
+```text
+AGENTS.md                    global guardrails and routing
+STRUCTURE.md                 extension and organization conventions
+procedures/
+  review-response/           manuscript + reviews -> validated response package
+  comp-chem-workflow/        calculation lifecycle and scientific gates
+  literature-to-calculation/ literature/SI -> concrete calculation target
+  research-orchestrator/     task DAG, artifacts, decisions, events, leases
+knowledge/                   tool-independent scientific references
+tools/
+  structure-prep/            molecular and periodic structure preparation
+  vasp/ cp2k/ gaussian/      electronic-structure and quantum-chemistry engines
+  gromacs/ lammps/ deepmd/   molecular dynamics and machine-learning potentials
+  phonopy/ catmap/ lobster/  phonons, microkinetics, and bonding analysis
+  multiwfn/ vaspkit/ ovito/  analysis, post-processing, and visualization
+  hpc-submit/                scheduler scripts, monitoring, and recovery
+  remote-compute/            local MCP -> agentless SSH/Slurm/PBS execution
+  rsess/                     persistent interactive remote shell sessions
+  report/                    report and response-package assembly
+benchmark/                   peer-review replication cases and evaluations
+```
+
+Every procedure and tool follows the structure documented in [`STRUCTURE.md`](STRUCTURE.md):
+
+- `SKILL.md` is a concise routing and workflow entry point;
+- `references/` contains detailed operation, validation, error, and provenance rules;
+- `examples/` contains sanitized configurations or verified cases;
+- `scripts/` contains deterministic preflight checks and parsers.
+
+## Helper-script runtime
+
+Install [`uv`](https://docs.astral.sh/uv/) for helpers with third-party dependencies.
+Scripts that need packages such as pymatgen, RDKit, or OVITO declare them inline and can
+run in isolated cached environments:
+
+```bash
+uv run path/to/script.py ...
+```
+
+Pure-standard-library preflight checks and parsers need only a modern Python
+interpreter. On offline compute nodes, warm `uv` environments on a connected login node,
+place `UV_CACHE_DIR` on shared storage, and run with `uv run --offline`. A prepared
+conda/mamba environment is the fallback when PyPI is inaccessible or a package is more
+reliable from conda-forge.
+
+Cluster-specific mirror URLs, partitions, modules, code paths, quotas, and job templates
+belong in the remote user's `~/.cluster-agents.md`, never in this repository.
+
+## Security model
+
+The agentless gateway is fail-closed:
+
+- callers select configured aliases, never raw hostnames or usernames;
+- OpenSSH uses batch authentication and strict host-key checking;
+- upload, download, research-state, and remote roots are allowlisted;
+- job IDs and relative paths use bounded portable character sets;
+- symlinks, path traversal, reserved gateway names, and overwrites are rejected;
+- staged inputs and downloads are SHA-256 verified;
+- submission approval is bound to the exact manifest;
+- submission and cancellation default to disabled per target;
+- remote submission is guarded against replay;
+- no password, private key, physical hostname, model credential, or licensed file is
+  written to project state or the repository.
+
+The gateway audit log is execution evidence, not the scientific source of truth. Copy
+durable job facts into `.research/` and run the producing engine's parser before
+accepting a result.
+
+Read the full protocol and validation ladder before production use:
+
+- [`tools/remote-compute/references/protocol.md`](tools/remote-compute/references/protocol.md)
+- [`tools/remote-compute/references/validation.md`](tools/remote-compute/references/validation.md)
+- [`tools/remote-compute/references/errors.md`](tools/remote-compute/references/errors.md)
+
+## Current status
+
+The skill structure, local gateway logic, MCP handshake/tool discovery, Windows command
+handling, configuration examples, and existing research-orchestrator workflows are
+covered by offline tests. Every new workstation/cluster pair must still complete the
+read-only and harmless-job activation ladder before production submission is enabled.
+
+Run the local checks with Python 3.11 or newer:
+
+```bash
+python -m unittest discover -s tools/remote-compute/scripts -p "test_*.py"
+python procedures/research-orchestrator/scripts/smoke_tests.py
+```
+
+The second command requires PyYAML; it may also be run through an environment that
+provides that dependency.
 
 ## Design principles
 
-1. **Skills carry knowledge the model can't infer**: concrete templates, default policies, error-recovery tables, and validation scripts — not generic checklists.
-2. **Routing happens through descriptions**, not router trees. Each skill's frontmatter says when to use it; `comp-chem-workflow` coordinates multi-stage work.
-3. **Deterministic over improvised**: input validation and output parsing are scripts, so they behave the same on every run.
-4. **Safety rails are centralized** in `AGENTS.md`: provenance, no invented parameters, approval breakpoints before expensive or destructive actions.
-5. **Durable orchestration state is explicit**: `.research/` records task DAGs, artifacts, decisions, events, leases, and acceptance gates so a project can be resumed or handed off without relying on chat history.
+1. Skills contain concrete scientific and operational knowledge, not generic prompts.
+2. Frontmatter descriptions route tasks without a central hard-coded router.
+3. Deterministic checks and parsers take precedence over improvised interpretation.
+4. Human approval gates precede expensive, destructive, or scientifically consequential
+   actions.
+5. Durable task, decision, lease, and artifact state makes work resumable and auditable.
+6. Remote compute capability remains narrower than a general remote shell.
 
-## A note on reference values
+## Reference values
 
-INCAR templates, Hubbard U values, convergence thresholds, and force-field defaults in `references/` are widely used literature/community starting points. They are **defaults, not endorsements** — when reproducing a paper or following group conventions, the source's settings always win. Edit the reference files to encode your own group's conventions; that is the intended use.
+INCAR templates, Hubbard U values, convergence thresholds, and force-field defaults are
+literature or community starting points, not endorsements. When reproducing a paper or
+following group conventions, the cited method or approved group policy wins. Adapting
+the reference files to encode a group's reviewed conventions is an intended use.
 
-## Peer-review-replication benchmark
+## Peer-review replication benchmark
 
-`benchmark/` contains the complete evaluation reported in the AICC paper: five published Nature Communications papers whose review files contain explicit computational requests, redacted so the referees' questions remain answerable but the authors' computational answers are removed. Agents equipped with this skill collection answered the original referees' requests autonomously; a fixed six-dimension rubric with seven mandatory red flags then scored the agent reports head-to-head against the original authors' own calculations, executed end-to-end by two independent LLM evaluator models. The case fixtures, agent reports, task prompt, rubric, orchestration protocol, design rationale and both evaluators' complete rating files are all included — see `benchmark/README.md`.
+`benchmark/` contains five redacted Nature Communications cases with computational
+requests preserved and the authors' computational answers withheld. It includes the
+task prompt, rubric, mandatory red flags, agent reports, orchestration protocol, design
+rationale, and two independent evaluator result sets. See
+[`benchmark/README.md`](benchmark/README.md).
 
 ## License
 
-This repository is licensed under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/) (see `LICENSE`). The redacted benchmark fixtures under `benchmark/cases/` are derivatives of open-access Nature Communications articles published under CC BY 4.0; original attribution is given by DOI in `benchmark/README.md`.
+This repository is licensed under [CC BY-NC 4.0](https://creativecommons.org/licenses/by-nc/4.0/).
+The benchmark fixtures derive from open-access Nature Communications articles under CC
+BY 4.0; DOI attribution is provided with each case.
 
 ## Citation
 
-If you use this collection or the benchmark, please cite the repository (see `CITATION.cff`) and the accompanying paper:
+If you use this collection or benchmark, cite the repository via `CITATION.cff` and the
+accompanying paper:
 
-> R. Wang, J. Cai & J.-C. Liu. *A harness-neutral skill framework for agentic computational chemistry evaluated on peer-review-derived tasks.* Manuscript in preparation (2026).
+> R. Wang, J. Cai & J.-C. Liu. *A harness-neutral skill framework for agentic
+> computational chemistry evaluated on peer-review-derived tasks.* Manuscript in
+> preparation (2026).
