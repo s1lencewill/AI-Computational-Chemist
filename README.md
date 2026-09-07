@@ -72,6 +72,7 @@ tools/                         per-code skills - how each tool is operated
   lobster/                     LOBSTER COHP/COOP bonding analysis from VASP wavefunctions
   ovito/                       atomistic visualization and trajectory analysis
   hpc-submit/                  local / SSH / Slurm / PBS execution
+  remote-compute/              local MCP -> agentless SSH/Slurm/PBS execution
   rsess/                       persistent remote shell sessions (tmux on the remote)
   report/                      assemble the near-submission .docx report / response package
 benchmark/                     the peer-review-replication benchmark (cases, rubric, evaluations)
@@ -110,6 +111,15 @@ Manual install for **Codex / AGENTS.md-native harnesses** - `AGENTS.md` is read 
 **Any other agent** — load `AGENTS.md` as a system/project instruction and make `procedures/*/SKILL.md` and `tools/*/SKILL.md` discoverable (the frontmatter `description` is the routing key).
 
 **Site setup (required before running calculations)** — every environment is different, so the collection never assumes yours. The agent learns a cluster in three tiers (full rules in `AGENTS.md` "Site environment"): (1) a tiny **local bootstrap** — just how to connect and transfer files — that you provide once (a small file, your agent's memory, or taught interactively); (2) the **login banner/MOTD** it reads on connecting; (3) an operating guide **`~/.cluster-agents.md` in your home directory on the cluster** — partitions, modules, code paths, job templates, quotas — authored once on the machine so every later session and teammate inherits it. Fill `~/.cluster-agents.md` from `tools/hpc-submit/references/cluster-guide-template.md`, or let the agent draft it after probing the cluster. Connection facts stay on your machine; nothing site-specific ever enters this repo.
+
+**Agentless remote execution** — `tools/remote-compute/` adds a stdio MCP gateway that
+runs on the operator workstation and dispatches bounded, hash-verified job operations
+through OpenSSH/SCP. DSH, Codex, Claude Code, or another local MCP client can share the
+same private target policy. The compute server needs only OpenSSH, POSIX tools, the
+scheduler, computational codes, and optional copied checker/parser scripts: no Harness,
+LLM Agent, inbound MCP service, or model API key. Submission and cancellation are
+disabled per target until explicitly enabled. Start with
+`tools/remote-compute/references/configuration.md`.
 
 ## Design principles
 

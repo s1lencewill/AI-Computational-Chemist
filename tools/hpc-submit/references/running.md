@@ -11,8 +11,10 @@ DeePMD, phonopy arrays, GROMACS if present, or analysis jobs), read or re-read
 the target `~/.cluster-agents.md` in the current execution context:
 
 1. If already running on the target cluster, read the local file directly.
-2. If driving a remote cluster, open the persistent session first, read the MOTD,
-   then read the remote user's `~/.cluster-agents.md`.
+2. If driving a remote cluster from a local Agent, prefer `remote-compute` to probe the
+   approved target and read the remote user's `~/.cluster-agents.md` with size/hash
+   provenance. Open an `rsess` persistent session only for genuinely stateful
+   interactive work.
 3. Apply `Custom Instructions`, `Scheduler`, `Storage`, `Software Environment`,
    `Computational Codes`, and `Job Script Patterns` before choosing headers,
    modules, launchers, scratch paths, GPU requests, or Python/conda/uv setup.
@@ -105,11 +107,20 @@ mpirun vasp_std
 
 ## Remote workspace setup (once per campaign)
 
-0. Open a persistent remote session using the local bootstrap (connection command/alias), then read the MOTD and the remote `~/.cluster-agents.md` operating guide. Use the `rsess` skill (`rsess open <topic> <target>`) — it runs tmux on the remote, so state (cwd, loaded modules, venvs) survives across calls and connection drops, and `run` output is captured faithfully in per-command files. If rsess is not available, use whatever persistent-session tool the local bootstrap specifies; never rely on one-shot `ssh host cmd` which loses state between calls.
-1. Create the campaign directory tree on the remote.
-2. Copy the engine skills' preflight/parser scripts there via the configured transfer route.
+0. Choose the transport from the task: use `remote-compute` for normal scheduler jobs
+   from a local Agent; use `rsess` only when interactive shell state must persist. With
+   `remote-compute`, probe the approved alias and read the remote
+   `~/.cluster-agents.md`; no Agent or persistent MCP service runs on the server.
+1. Prepare a new project-local job bundle. Keep the canonical `.research/` control state
+   on the operator workstation and use a unique portable job ID for the remote directory.
+2. Include the engine skill's required preflight/parser scripts in the staged bundle
+   when they must execute remotely. `compute_stage_job` uploads through the configured
+   route, verifies every file hash, and refuses an existing job directory.
 3. Ensure a modern Python per the remote `~/.cluster-agents.md` Python recipe (e.g. load conda/uv, or create an agent env and `pip/uv install` what the scripts need, when allowed). Never assume the system interpreter is recent. Repo helper scripts with third-party deps run via `uv run` (inline PEP 723) — but **compute nodes are usually offline**: point `UV_CACHE_DIR` at a shared filesystem and **warm each script's env once on the login node** (just run it once where there is connectivity — first use populates the cache), then jobs run with `uv run --offline` and fetch nothing. Without a warmed cache, a first-ever `uv run` inside a batch job on an air-gapped node will hang trying to reach the index. uv is preferred (point it at a PyPI mirror via `UV_DEFAULT_INDEX` if the default index is slow); as a fallback, prepare a **conda/mamba** env that has the deps and run the scripts with its `python` — use it when a package installs more reliably from conda-forge (ovito has its own channel) or uv/PyPI is blocked. Index/channel mirror URLs come from `~/.cluster-agents.md`.
-4. Every stage then runs: stage inputs -> remote preflight script -> submit -> parse with the remote parser script.
+4. Every stage then runs: local scientific gates -> hash-verified stage -> recorded
+   approval + active lease -> submit -> scheduler status -> engine parser -> scientific
+   validation. Record the manifest hash, remote target/job ID, approval, scheduler job
+   ID, and retrieved artifact hashes in `.research/`.
 
 ## Watcher idiom (chaining stages without polling by hand)
 

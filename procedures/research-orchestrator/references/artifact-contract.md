@@ -39,6 +39,11 @@ Recommended:
 - `accepted_by`: decision ID, critic task ID, or user approval.
 - `lease_id`: execution lease that owned generation, for expensive or stateful runs.
 - `job_id`: scheduler or local job identifier when applicable.
+- `remote_location`: structured agentless execution identity (`kind: ssh`, approved
+  target alias, gateway job ID, and optional relative artifact path). Keep the required
+  registry `path` project-local; never put credentials or a physical hostname here.
+- `size_bytes`: remote/local artifact size when the file is not stored inline.
+- `retrieval`: `on-demand` when a large remote artifact intentionally remains remote.
 - `resolves_follow_up`: `follow-up-proposal` artifact ID(s) resolved by this accepted
   artifact.
 - `blocks_report`: for `follow-up-proposal`; defaults to blocking final report when
@@ -159,6 +164,9 @@ Some artifact types should not be accepted without named release gates:
   follow-up task does not resolve the proposal; the follow-up evidence must be accepted
   or explicitly waived/limited.
 - `parser-result` — engine parser command and exit status.
+- `job-record` — local staging/submission receipt: immutable manifest SHA-256, approved
+  target alias, gateway job ID, scheduler/job ID after submission, approval decision,
+  execution lease, and retrieved-artifact hashes. See `references/remote-execution.md`.
 - `scientific-claim` — critic or user acceptance against the pre-registered criterion.
 - `figure` — visualization evidence gate for source, view, projection, parameters, and
   nonblank/visual inspection. Final-report VASP volumetric figures must record the

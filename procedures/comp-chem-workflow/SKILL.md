@@ -30,7 +30,9 @@ Before generating any input, state and confirm:
 - **Model system** — composition, phase, surface, defects, adsorbates, charge, spin.
 - **Method** — functional/level, dispersion, U, force field, reference states.
 - **Code** — the executing program (VASP, QE, CP2K, …): a separate, downstream choice by availability/convention; the same proposal can be realized with different codes. Route to that tool skill once chosen.
-- **Execution target** — local, SSH host, or scheduler; rough cost estimate.
+- **Execution target** — local, an approved agentless `remote-compute` target, or a
+  scheduler context; rough cost estimate. Keep the Agent local unless the operator
+  explicitly chose a remote Harness deployment.
 - **Success criteria** — observable, checkable outcomes (converged to X, value within Y of reference).
 - **Non-goals** — what is explicitly out of scope (prevents scope creep on long runs).
 

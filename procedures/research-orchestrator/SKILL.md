@@ -126,6 +126,7 @@ Execution ownership:
 | execution ownership, owner directories, exclusive paths | `references/ownership-protocol.md` |
 | lease schema, TTLs, heartbeats, release rules | `references/lease-contract.md` |
 | stale task reconciliation and recovery decisions | `references/recovery-protocol.md` |
+| local Agent dispatch to SSH/Slurm/PBS, remote job records and artifact hashes | `references/remote-execution.md` + `tools/remote-compute/` |
 | artifact registry, status rules, provenance, reportable evidence | `references/artifact-contract.md` |
 | human decisions, assumptions, append-only events, reconciliation | `references/event-log.md` |
 | ready/blocked rules and CLI behavior | `references/ready-rules.md` |

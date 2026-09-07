@@ -6,7 +6,7 @@ How this collection is organized and how to extend it.
 
 ```text
 procedures/   orchestrator skills: review-response, comp-chem-workflow, literature-to-calculation, research-orchestrator
-tools/        per-code skills: vasp, cp2k, gaussian, multiwfn, gromacs, lammps, mlp, deepmd, phonopy, vaspkit, catmap, lobster, ovito, structure-prep, hpc-submit, rsess, report
+tools/        per-code/transport skills: vasp, cp2k, gaussian, multiwfn, gromacs, lammps, mlp, deepmd, phonopy, vaspkit, catmap, lobster, ovito, structure-prep, hpc-submit, remote-compute, rsess, report
 knowledge/    tool-agnostic science + practice (flat reference library; NOT skills)
 ```
 
@@ -44,6 +44,7 @@ procedures/research-orchestrator/
     ownership-protocol.md   # single-owner execution rules
     lease-contract.md       # lease/heartbeat file format
     recovery-protocol.md    # stale lease and interrupted work recovery
+    remote-execution.md     # local Agent -> agentless SSH/scheduler state and artifacts
     event-log.md            # append-only workflow event conventions
   scripts/
     init_project.py

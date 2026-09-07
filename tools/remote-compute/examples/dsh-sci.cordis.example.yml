@@ -1,0 +1,19 @@
+- insert:
+    - id: mcp-aicc-remote-compute
+      name: '@deepseek-ai/dsh-mcp-client'
+      config:
+        serverName: aicc-compute
+        transport: stdio
+        command: 'C:\Users\REPLACE_USER\miniconda3\python.exe'
+        args:
+          - 'G:\REPLACE_PATH\AI-Computational-Chemist\tools\remote-compute\scripts\remote_compute_mcp.py'
+          - '--config'
+          - 'C:\Users\REPLACE_USER\.dsh\remote-compute.private.json'
+        cwd: 'G:\REPLACE_PATH\AI-Computational-Chemist\tools\remote-compute\scripts'
+        toolCallTimeoutMs: 900000
+        failOnStartupError: false
+        reconnect:
+          enabled: true
+          initialDelayMs: 1000
+          maxDelayMs: 30000
+          maxAttempts: 5

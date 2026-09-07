@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "sshExecutable": "C:\\Windows\\System32\\OpenSSH\\ssh.exe",
+  "scpExecutable": "C:\\Windows\\System32\\OpenSSH\\scp.exe",
+  "auditLog": "C:\\Users\\REPLACE_USER\\.dsh\\remote-compute-audit.jsonl",
+  "targets": {
+    "example-slurm": {
+      "sshAlias": "example-slurm",
+      "scheduler": "slurm",
+      "remoteRoot": "/scratch/REPLACE_USER/aicc-jobs",
+      "allowedUploadRoots": [
+        "G:\\research\\prepared-jobs"
+      ],
+      "allowedDownloadRoots": [
+        "G:\\research\\retrieved-results"
+      ],
+      "allowedResearchRoots": [
+        "G:\\research\\projects"
+      ],
+      "knownHostsFile": "C:\\Users\\REPLACE_USER\\.ssh\\known_hosts",
+      "connectTimeoutSeconds": 15,
+      "commandTimeoutSeconds": 120,
+      "maxUploadFiles": 2000,
+      "maxUploadBytes": 2147483648,
+      "maxTextBytes": 200000,
+      "submitEnabled": false,
+      "cancelEnabled": false
+    }
+  }
+}

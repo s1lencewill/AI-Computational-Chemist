@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shlex
 import subprocess
 import sys
@@ -35,7 +36,17 @@ def load_task(research_dir: Path, task_id: str) -> dict[str, Any]:
 
 def command_tokens(raw: Any, project_root: Path) -> list[str]:
     if isinstance(raw, str):
-        tokens = shlex.split(raw)
+        tokens = shlex.split(raw, posix=os.name != "nt")
+        if os.name == "nt":
+            # POSIX shlex consumes backslashes in Windows paths. Non-POSIX mode
+            # preserves them but retains matching outer quotes, which are not part
+            # of argv when subprocess receives a list.
+            tokens = [
+                token[1:-1]
+                if len(token) >= 2 and token[0] == token[-1] and token[0] in {"'", '"'}
+                else token
+                for token in tokens
+            ]
     elif isinstance(raw, list) and all(isinstance(item, str) for item in raw):
         tokens = list(raw)
     else:
@@ -81,7 +92,7 @@ def main() -> int:
 
     for idx, raw in enumerate(checks, 1):
         tokens = command_tokens(raw, project_root)
-        printable = shlex.join(tokens)
+        printable = subprocess.list2cmdline(tokens) if os.name == "nt" else shlex.join(tokens)
         print(f"CHECK {idx}/{len(checks)} {args.task_id}: {printable}")
         if args.dry_run:
             continue

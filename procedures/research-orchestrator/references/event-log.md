@@ -31,6 +31,10 @@ record `approval_type` with the exact task `approval` value, for example
 `expensive_hpc_submission`. This prevents a method-choice or artifact-acceptance
 decision from accidentally opening an unrelated execution gate.
 
+For `remote-compute`, bind an `expensive_hpc_submission` approval to the immutable
+staging receipt with `manifest_sha256`. Bind a `remote_job_cancellation` approval to the
+specific `scheduler_job_id`. The local gateway rejects missing or mismatched bindings.
+
 Record decisions for:
 
 - expensive HPC submission approval;
@@ -62,6 +66,8 @@ required_check_passed
 required_check_failed
 job_submitted
 job_finished
+remote_job_staged
+remote_artifact_fetched
 task_claimed
 task_heartbeat
 task_released

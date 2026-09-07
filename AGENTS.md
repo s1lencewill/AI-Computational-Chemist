@@ -27,6 +27,7 @@ Match the request against skill descriptions: orchestrators in `procedures/`, pe
 | Microkinetic modeling, CatMAP, TOF/coverage maps, volcano plots | `catmap` |
 | OVITO: atomistic rendering, structure classification, coordination/RDF, defect and trajectory analysis | `ovito` |
 | Drive a *remote* machine over a persistent shell (stateful commands, HPC interaction from another machine; not when the agent already runs on the target) | `rsess` |
+| Dispatch to an approved SSH/Slurm/PBS target while the Agent remains local and no Agent is installed remotely | `remote-compute` |
 | Submit / monitor / recover jobs (local, SSH, Slurm, PBS) | `hpc-submit` |
 | Compile results into a near-submission `.docx` report / response package (the default final deliverable) | `report` |
 | Parse outputs, check convergence | the engine skill that produced them (each carries its parser) |
@@ -104,13 +105,19 @@ This collection is environment-agnostic: nothing in it may assume a specific clu
 
 Otherwise, discover the cluster's facts in three tiers, cheapest first — most knowledge lives **on the cluster**, not in your local files:
 
-1. **Local bootstrap — just enough to connect.** Before first contact you need only the minimum: the connection command/alias and the file-transfer pattern (the chicken-and-egg facts you can't learn from a machine you haven't reached). This minimum lives **outside this repo** — in the operator's home, your own agent memory, or taught interactively this session — never as a file committed (or written) into the repo tree, since it names a real host. Never guess it, never reuse another user's. Ask the user if it's missing.
+1. **Local bootstrap — just enough to connect.** Before first contact you need only the minimum: an approved target alias and transfer route (the chicken-and-egg facts you can't learn from a machine you haven't reached). Prefer the local `remote-compute` MCP gateway when the Agent must stay on the operator workstation; use `rsess` only when a genuinely stateful interactive shell is required. This minimum lives **outside this repo** — in the operator's private gateway/OpenSSH configuration, own agent memory, or taught interactively this session — never as a committed file, since it names a real host. Never guess it, never reuse another user's. Ask the user if it's missing.
 2. **On login, read the machine's own announcements.** After connecting, read the login banner / MOTD (and anything it names, e.g. a `clusterinfo` command or a docs path). Clusters often announce partitions, quotas, and policy there. If it points to an operating guide, follow it.
 3. **Read the operating guide in the remote home: `~/.cluster-agents.md`.** This is the cluster's own agent guide — scheduler/partitions, modules, code paths, job-script templates, quotas, site policy. It lives on the cluster so it is authored once and every later session and teammate inherits it. If it's absent, gather the facts by asking the user and probing (`sinfo`, `module avail`, ...), then **offer to write `~/.cluster-agents.md`** (template: `tools/hpc-submit/references/cluster-guide-template.md`) so the knowledge persists where it belongs.
 
 **Precedence on conflict:** the user's own `~/.cluster-agents.md` wins over any guide the MOTD/banner points to. The MOTD-linked docs are the center's generic defaults; `~/.cluster-agents.md` holds the user's tested, preferred conventions for this work, so where they disagree, follow `~/.cluster-agents.md` (and note the discrepancy if it looks consequential).
 
 Write durable connection facts back to your local bootstrap; write durable operating facts to the remote `~/.cluster-agents.md`. Secrets (tokens, passwords, licensed file contents) go in neither and never into this repo, reports, or commits. **Modern Python**: repo scripts target modern Python and are never downgraded for old system interpreters — obtain a modern interpreter per the guide's recipe (conda/uv/module) and freely create envs/install packages where the guide allows. Repo helper scripts with third-party deps (pymatgen/rdkit/ovito/…) carry inline PEP 723 metadata — **run them with `uv run script.py …`** and uv resolves a per-script isolated, cached env (conflicting tools never clash); never assume the host already has the package, and never hand-build a venv for them. First run needs the index; afterward `uv run --offline` (or `UV_OFFLINE=1`) needs no network. On unstable links or offline compute nodes, warm the per-tool cache once where there is connectivity (HPC: a shared `UV_CACHE_DIR` warmed on the login node), then run offline. uv is the preferred provider (point it at a PyPI mirror via `UV_DEFAULT_INDEX` where the default index is slow); fall back to a prepared **conda/mamba** env (then plain `python script.py`) when a package installs more reliably from conda-forge (notably ovito) or uv/PyPI is blocked. Mirror URLs live in `~/.cluster-agents.md`, never in this repo.
+
+In agentless remote mode, DSH/Codex/Claude, the MCP process, credentials, and
+`.research/` control state remain on the operator workstation. The server receives only
+bounded job bundles and gateway-generated scheduler/file operations. It must not receive
+model API keys or a remote Agent runtime. Treat the MCP audit log as execution evidence;
+copy durable job IDs, hashes, approvals, leases, and parser verdicts into `.research/`.
 
 ## Approval breakpoints
 
