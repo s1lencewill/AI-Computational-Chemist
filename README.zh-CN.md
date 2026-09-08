@@ -92,8 +92,7 @@ Shell 命令接口。
 
 工作站需要：
 
-- Python 3.11 或更高版本。本机应使用现代 Miniconda 环境，不要使用旧的
-  Python 3.6 环境；
+- Python 3.11 或更高版本；
 - Windows OpenSSH 的 `ssh.exe` 和 `scp.exe`；
 - 已测试的 OpenSSH 别名，使用密钥或 SSH Agent 完成非交互认证；
 - 已核对并写入 `known_hosts` 的服务器指纹。
