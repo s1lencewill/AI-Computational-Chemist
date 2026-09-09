@@ -130,12 +130,14 @@ C:\Users\REPLACE_USER\miniconda3\python.exe `
   --check-config
 ```
 
-### 3. 在 DSH 中注册 MCP 网关
+### 3. 创建 DSH 科研模式并注册 MCP 网关
 
-将
+在 DSH 的 Agent Presets 设置中复制随软件发布的 `standard` preset，新 preset 的
+ID 填写 `sci`。然后把
 [`tools/remote-compute/examples/dsh-sci.cordis.example.yml`](tools/remote-compute/examples/dsh-sci.cordis.example.yml)
-合并到用户自己的 `sci` preset，并替换所有 `REPLACE_*` 值。不要修改 DSH 随软件
-发布的 preset。
+中的直接插件行追加到 `sci/agent.cordis.yml`，并替换所有 `REPLACE_*` 值。这个示例
+是 preset composition 条目，不是 profile `cordis.patch.yml` 操作。不要修改 DSH
+随软件发布的 preset。保存后新建一个使用 `sci` 的会话。
 
 注册后，DSH 会看到以下工具：
 

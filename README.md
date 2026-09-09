@@ -134,12 +134,14 @@ C:\Users\REPLACE_USER\miniconda3\python.exe `
   --check-config
 ```
 
-### 3. Register the MCP gateway in DSH
+### 3. Create the DSH sci preset and register the gateway
 
-Merge
+In DSH's Agent Presets settings, copy the shipped `standard` preset to a user-owned
+preset with id `sci`. Then append the direct plugin row from
 [`tools/remote-compute/examples/dsh-sci.cordis.example.yml`](tools/remote-compute/examples/dsh-sci.cordis.example.yml)
-into the user-owned `sci` preset and replace every `REPLACE_*` value. Do not edit a
-shipped preset.
+to `sci/agent.cordis.yml` and replace every `REPLACE_*` value. The example is a preset
+composition row, not a profile `cordis.patch.yml` operation. Do not edit a shipped
+preset. Start a new `sci` session after saving the file.
 
 DSH exposes tools such as:
 
