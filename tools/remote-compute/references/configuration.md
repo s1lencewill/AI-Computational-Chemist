@@ -55,11 +55,10 @@ spaces.
 
 ## DSH sci preset
 
-Create a user-owned `sci` preset by copying DSH's shipped `standard` preset. After
-replacing every `REPLACE_*` token in `examples/dsh-sci.cordis.example.yml`, append that
-direct MCP plugin row to `sci/agent.cordis.yml`. Do not include the example's row in a
-profile `cordis.patch.yml` unless every preset should see the gateway, and do not edit a
-shipped preset.
+After replacing every `REPLACE_*` token in
+`examples/dsh-sci.cordis.example.yml`, add that MCP row to the user-owned `sci`
+preset's `agent.cordis.yml` (or merge the equivalent row through the user's profile
+patch when all presets should see it). Do not edit a shipped preset.
 
 DSH exposes the tools as
 `mcp__aicc-compute__compute_list_targets`,
