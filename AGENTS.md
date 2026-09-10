@@ -27,8 +27,8 @@ Match the request against skill descriptions: orchestrators in `procedures/`, pe
 | Microkinetic modeling, CatMAP, TOF/coverage maps, volcano plots | `catmap` |
 | OVITO: atomistic rendering, structure classification, coordination/RDF, defect and trajectory analysis | `ovito` |
 | Drive a *remote* machine over a persistent shell (stateful commands, HPC interaction from another machine; not when the agent already runs on the target) | `rsess` |
-| Dispatch to an approved SSH/Slurm/PBS target while the Agent remains local and no Agent is installed remotely | `remote-compute` |
-| Submit / monitor / recover jobs (local, SSH, Slurm, PBS) | `hpc-submit` |
+| Dispatch to an approved SSH/Slurm/PBS/LSF target while the Agent remains local and no Agent is installed remotely | `remote-compute` |
+| Submit / monitor / recover jobs (local, SSH, Slurm, PBS, LSF) | `hpc-submit` |
 | Compile results into a near-submission `.docx` report / response package (the default final deliverable) | `report` |
 | Parse outputs, check convergence | the engine skill that produced them (each carries its parser) |
 

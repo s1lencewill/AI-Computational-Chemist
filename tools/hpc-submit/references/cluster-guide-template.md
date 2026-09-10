@@ -21,7 +21,7 @@
 
 ## Scheduler
 
-- Scheduler: `slurm` / `pbs` / `none`
+- Scheduler: `slurm` / `pbs` / `lsf` / `none`
 - Default queue/partition:
 - Available queues/partitions:
   - name:

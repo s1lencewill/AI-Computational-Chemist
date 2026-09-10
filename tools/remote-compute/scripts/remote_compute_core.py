@@ -25,6 +25,22 @@ SAFE_REMOTE_ROOT = re.compile(r"^/[A-Za-z0-9._/@+-]+(?:/[A-Za-z0-9._@+-]+)*$")
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
 RESERVED_BUNDLE_NAMES = {"AICC_JOB.json", "SHA256SUMS", ".aicc-submit-started"}
 
+SLURM_TERMINAL_STATES = {
+    "BOOT_FAIL",
+    "CANCELLED",
+    "COMPLETED",
+    "DEADLINE",
+    "FAILED",
+    "NODE_FAIL",
+    "OUT_OF_MEMORY",
+    "PREEMPTED",
+    "REVOKED",
+    "SPECIAL_EXIT",
+    "TIMEOUT",
+}
+PBS_TERMINAL_STATES = {"C", "F"}
+LSF_TERMINAL_STATES = {"DONE", "EXIT", "ZOMBI"}
+
 
 class GatewayError(RuntimeError):
     """A safe, user-visible gateway failure."""
@@ -126,11 +142,41 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _normalize_scheduler_state(scheduler: str, raw_status: str) -> tuple[str, bool]:
+    """Return a stable scheduler state without interpreting engine convergence."""
+    state = "UNKNOWN"
+    if scheduler == "slurm":
+        for line in raw_status.splitlines():
+            fields = line.strip().split("|")
+            if len(fields) >= 2 and fields[1].strip():
+                state = re.split(r"[ +]", fields[1].strip().upper(), maxsplit=1)[0]
+                break
+        return state, state in SLURM_TERMINAL_STATES
+
+    if scheduler == "pbs":
+        match = re.search(r"^\s*job_state\s*=\s*([A-Za-z])\s*$", raw_status, re.M)
+        if match:
+            state = match.group(1).upper()
+        return state, state in PBS_TERMINAL_STATES
+
+    # LSF long output wraps at the terminal width, including inside
+    # `Status <DONE>`. Collapse whitespace inside the status token only.
+    match = re.search(r"Status\s*<([^>]+)>", raw_status, re.I | re.S)
+    if match:
+        state = re.sub(r"\s+", "", match.group(1)).upper()
+    elif re.search(r"\bDone successfully\b", raw_status, re.I):
+        state = "DONE"
+    elif re.search(r"\bExited\b", raw_status, re.I):
+        state = "EXIT"
+    return state, state in LSF_TERMINAL_STATES
+
+
 @dataclass(frozen=True)
 class Target:
     name: str
     ssh_alias: str
     scheduler: str
+    login_shell: bool
     remote_root: str
     allowed_upload_roots: tuple[Path, ...]
     allowed_download_roots: tuple[Path, ...]
@@ -154,8 +200,8 @@ class Target:
         if not isinstance(ssh_alias, str) or not SAFE_SSH_ALIAS.fullmatch(ssh_alias):
             raise GatewayError(f"target {name}.sshAlias is not a safe OpenSSH alias")
         scheduler = value.get("scheduler")
-        if scheduler not in {"slurm", "pbs"}:
-            raise GatewayError(f"target {name}.scheduler must be slurm or pbs")
+        if scheduler not in {"slurm", "pbs", "lsf"}:
+            raise GatewayError(f"target {name}.scheduler must be slurm, pbs, or lsf")
         remote_root = value.get("remoteRoot")
         if not isinstance(remote_root, str) or not SAFE_REMOTE_ROOT.fullmatch(remote_root):
             raise GatewayError(
@@ -173,6 +219,7 @@ class Target:
             name=name,
             ssh_alias=ssh_alias,
             scheduler=scheduler,
+            login_shell=_boolean(value.get("loginShell", True), f"target {name}.loginShell"),
             remote_root=remote_root.rstrip("/"),
             allowed_upload_roots=_path_list(
                 value.get("allowedUploadRoots"), f"target {name}.allowedUploadRoots"
@@ -300,7 +347,8 @@ class RemoteComputeGateway:
         return result
 
     def _remote_shell(self, target: Target, script: str, label: str) -> CommandResult:
-        remote_command = f"sh -lc {shlex.quote(script)}"
+        shell_flag = "-lc" if target.login_shell else "-c"
+        remote_command = f"sh {shell_flag} {shlex.quote(script)}"
         argv = self._ssh_base(target) + ["--", target.ssh_alias, remote_command]
         return self._run(argv, target.command_timeout_seconds, label)
 
@@ -324,6 +372,7 @@ class RemoteComputeGateway:
                 {
                     "target": target.name,
                     "scheduler": target.scheduler,
+                    "login_shell": target.login_shell,
                     "submit_enabled": target.submit_enabled,
                     "cancel_enabled": target.cancel_enabled,
                 }
@@ -333,7 +382,11 @@ class RemoteComputeGateway:
 
     def probe_target(self, target_name: Any) -> dict[str, Any]:
         target = self._target(target_name)
-        scheduler_command = "sbatch" if target.scheduler == "slurm" else "qsub"
+        scheduler_command = {
+            "slurm": "sbatch",
+            "pbs": "qsub",
+            "lsf": "bsub",
+        }[target.scheduler]
         script = (
             "set -eu; "
             "printf 'host='; hostname; "
@@ -615,7 +668,7 @@ class RemoteComputeGateway:
                 "&& printf '%s\\n' \"$raw_job_id\" > .aicc-submit-started/scheduler-job-id "
                 "&& printf '%s\\n' \"$raw_job_id\""
             )
-        else:
+        elif target.scheduler == "pbs":
             submit_command = (
                 f"cd {shlex.quote(job_dir)} && sha256sum -c -- SHA256SUMS >/dev/null "
                 "&& mkdir -- .aicc-submit-started "
@@ -624,9 +677,27 @@ class RemoteComputeGateway:
                 "&& printf '%s\\n' \"$raw_job_id\" > .aicc-submit-started/scheduler-job-id "
                 "&& printf '%s\\n' \"$raw_job_id\""
             )
+        else:
+            submit_command = (
+                f"cd {shlex.quote(job_dir)} && sha256sum -c -- SHA256SUMS >/dev/null "
+                "&& mkdir -- .aicc-submit-started "
+                "&& sha256sum -c -- SHA256SUMS >/dev/null "
+                f"&& raw_job_id=$(bsub < {shlex.quote(submit_script)}) "
+                "&& scheduler_job_id=$(printf '%s\\n' \"$raw_job_id\" | "
+                "sed -n 's/.*Job <\\([0-9][0-9]*\\)>.*/\\1/p') "
+                "&& test -n \"$scheduler_job_id\" "
+                "&& printf '%s\\n' \"$scheduler_job_id\" > .aicc-submit-started/scheduler-job-id "
+                "&& printf '%s\\n' \"$raw_job_id\""
+            )
         result = self._remote_shell(target, f"set -eu; {submit_command}", "scheduler submission")
         raw_job_id = result.stdout.strip().splitlines()[-1].strip() if result.stdout.strip() else ""
-        scheduler_job_id = raw_job_id.split(";", 1)[0] if target.scheduler == "slurm" else raw_job_id
+        if target.scheduler == "slurm":
+            scheduler_job_id = raw_job_id.split(";", 1)[0]
+        elif target.scheduler == "lsf":
+            match = re.search(r"Job <([0-9]+)>", raw_job_id)
+            scheduler_job_id = match.group(1) if match else ""
+        else:
+            scheduler_job_id = raw_job_id
         if not SAFE_ID.fullmatch(scheduler_job_id):
             raise GatewayError(f"scheduler returned an invalid job id: {raw_job_id!r}")
         self._audit(
@@ -656,15 +727,24 @@ class RemoteComputeGateway:
                 f"sacct -n -P -j {shlex.quote(job)} "
                 "--format=JobIDRaw,State,ExitCode,Elapsed,Start,End"
             )
-        else:
+        elif target.scheduler == "pbs":
             script = f"qstat -f {shlex.quote(job)}"
+        else:
+            script = (
+                f"bjobs -a -l {shlex.quote(job)} 2>&1 "
+                f"|| bhist -l {shlex.quote(job)} 2>&1"
+            )
         result = self._remote_shell(target, script, "scheduler status")
+        raw_status = result.stdout.strip()
+        scheduler_state, terminal = _normalize_scheduler_state(target.scheduler, raw_status)
         self._audit("job_status_read", target=target.name, scheduler_job_id=job)
         return {
             "target": target.name,
             "scheduler": target.scheduler,
             "scheduler_job_id": job,
-            "raw_status": result.stdout.strip(),
+            "scheduler_state": scheduler_state,
+            "terminal": terminal,
+            "raw_status": raw_status,
             "note": "terminal scheduler state must still be followed by the engine parser",
         }
 
@@ -681,10 +761,14 @@ class RemoteComputeGateway:
     def _assert_remote_regular_file(
         self, target: Target, job_dir: str, relative: str
     ) -> None:
-        candidate = shlex.quote(relative)
+        # POSIX `test` has no portable `--` terminator. Prefix the already-
+        # validated relative path with `./` so a dash-leading filename cannot
+        # be interpreted as an operand, while retaining compatibility with
+        # older /bin/sh implementations used on HPC login nodes.
+        candidate = shlex.quote(f"./{relative}")
         script = (
             f"set -eu; cd {shlex.quote(job_dir)}; root=$(pwd -P); candidate={candidate}; "
-            "test -f -- \"$candidate\"; test ! -L -- \"$candidate\"; "
+            "test -f \"$candidate\"; test ! -L \"$candidate\"; "
             "resolved=$(realpath -e -- \"$candidate\"); "
             "case \"$resolved\" in \"$root\"/*) ;; *) exit 65 ;; esac"
         )
@@ -820,7 +904,11 @@ class RemoteComputeGateway:
         )
         if not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
             raise GatewayError("reason must be a non-empty string of at most 500 characters")
-        command = "scancel" if target.scheduler == "slurm" else "qdel"
+        command = {
+            "slurm": "scancel",
+            "pbs": "qdel",
+            "lsf": "bkill",
+        }[target.scheduler]
         self._remote_shell(target, f"{command} {shlex.quote(job)}", "scheduler cancellation")
         self._audit(
             "job_cancelled",

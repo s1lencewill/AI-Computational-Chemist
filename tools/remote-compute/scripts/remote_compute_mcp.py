@@ -13,7 +13,7 @@ from typing import Any, Callable
 from remote_compute_core import GatewayConfig, GatewayError, RemoteComputeGateway
 
 
-SERVER_INFO = {"name": "aicc-remote-compute", "version": "0.1.0"}
+SERVER_INFO = {"name": "aicc-remote-compute", "version": "0.2.0"}
 LEGACY_PROTOCOL = "2025-06-18"
 MODERN_PROTOCOL = "2026-07-28"
 MAX_LINE_BYTES = 4 * 1024 * 1024
@@ -36,7 +36,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "compute_probe_target",
-        "description": "Probe one approved SSH target and report its OS, root availability, and scheduler command.",
+        "description": "Probe one approved SSH target and report its OS, root availability, and Slurm/PBS/LSF scheduler command.",
         "inputSchema": object_schema({"target": {"type": "string"}}, ["target"]),
     },
     {
@@ -83,7 +83,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "compute_get_status",
-        "description": "Read authoritative Slurm/PBS status for a scheduler job; this does not claim scientific convergence.",
+        "description": "Read authoritative Slurm/PBS/LSF status with normalized scheduler_state and terminal fields; this does not claim scientific convergence.",
         "inputSchema": object_schema(
             {"target": {"type": "string"}, "scheduler_job_id": {"type": "string"}},
             ["target", "scheduler_job_id"],
@@ -138,7 +138,7 @@ TOOLS: list[dict[str, Any]] = [
     },
     {
         "name": "compute_cancel_job",
-        "description": "Cancel a Slurm/PBS job only when local policy enables it and an exact remote_job_cancellation user approval is bound to that scheduler job ID.",
+        "description": "Cancel a Slurm/PBS/LSF job only when local policy enables it and an exact remote_job_cancellation user approval is bound to that scheduler job ID.",
         "inputSchema": object_schema(
             {
                 "target": {"type": "string"},

@@ -11,7 +11,7 @@
 
 ## Post-run
 
-Run `uv run scripts/parse_gaussian.py JOB.log` — exits 0 only for a clean run; reports termination count, SCF energy, opt status, imaginary modes, thermochemistry, S².
+Run `uv run scripts/parse_gaussian.py JOB.log` — exits 0 only for a clean run; reports termination count, SCF energy, optimization status and all four convergence criteria, imaginary modes, thermochemistry, and S². Use `uv run scripts/parse_gaussian.py --json JOB.log` when the result will be registered as a machine-readable artifact. Exit 2 covers error termination, zero normal terminations, or fewer normal terminations than echoed route sections.
 
 Checks the script enforces, and what they mean:
 

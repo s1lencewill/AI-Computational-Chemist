@@ -78,3 +78,9 @@ owner should submit and monitor the expensive run.
 When `execution_policy.requires_claim: true`, ready means the task may be claimed. The
 owner still must run `claim_task.py` successfully before editing the owner directory or
 submitting an expensive job.
+
+For remote jobs whose user approval must contain the post-staging manifest SHA-256,
+model staging and submission as separate tasks. Give the staging task `approval: none`;
+make the expensive submission task depend on the accepted staging task and its validated
+`job-record`. Otherwise readiness correctly blocks the combined task before it can
+generate the very manifest required by its approval.

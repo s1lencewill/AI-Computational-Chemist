@@ -32,7 +32,7 @@ Windows workstation
           | OpenSSH/SCP: bounded files and generated operations only
           v
 Linux compute server
-  SSH + GNU tools + Slurm/PBS + scientific codes
+  SSH + GNU tools + Slurm/PBS/LSF + scientific codes
   no Agent, no MCP service, no model API key
 ```
 
@@ -59,7 +59,7 @@ plane.
 | Situation | Use | Agent on server? |
 |---|---|---:|
 | calculation runs on the same machine as the Agent | engine skill + `hpc-submit` | already local |
-| normal SSH/Slurm/PBS job dispatched from Windows | `remote-compute` + `hpc-submit` | no |
+| normal SSH/Slurm/PBS/LSF job dispatched from Windows | `remote-compute` + `hpc-submit` | no |
 | interactive investigation needs persistent shell state or `tmux` | `rsess` + `hpc-submit` | no |
 | organization deliberately deploys its harness on the cluster | native engine/HPC skills | yes |
 
@@ -183,6 +183,12 @@ approval decision to the project's `.research/decisions.jsonl`:
 hash. A superseded or reusable generic approval is rejected. Cancellation requires a
 different `remote_job_cancellation` decision bound to the exact `scheduler_job_id`.
 
+When `.research/` leases are enabled, model immutable staging and approved submission
+as two sequential tasks. The staging task uses `approval: none` and produces the
+validated manifest/job record; the submission task depends on it and requires the exact
+`expensive_hpc_submission` approval. This avoids waiting for an approval whose hash does
+not exist until after staging.
+
 The gateway also creates a remote submission marker before calling the scheduler, so
 an interrupted SSH response cannot silently cause an automatic duplicate submission.
 
@@ -252,7 +258,7 @@ tools/
   phonopy/ catmap/ lobster/  phonons, microkinetics, and bonding analysis
   multiwfn/ vaspkit/ ovito/  analysis, post-processing, and visualization
   hpc-submit/                scheduler scripts, monitoring, and recovery
-  remote-compute/            local MCP -> agentless SSH/Slurm/PBS execution
+  remote-compute/            local MCP -> agentless SSH/Slurm/PBS/LSF execution
   rsess/                     persistent interactive remote shell sessions
   report/                    report and response-package assembly
 benchmark/                   peer-review replication cases and evaluations
@@ -321,10 +327,11 @@ Run the local checks with Python 3.11 or newer:
 
 ```bash
 python -m unittest discover -s tools/remote-compute/scripts -p "test_*.py"
+python -m unittest discover -s tools/gaussian/scripts -p "test_*.py"
 python procedures/research-orchestrator/scripts/smoke_tests.py
 ```
 
-The second command requires PyYAML; it may also be run through an environment that
+The third command requires PyYAML; it may also be run through an environment that
 provides that dependency.
 
 ## Design principles

@@ -1,6 +1,6 @@
 ---
 name: hpc-submit
-description: Submit, monitor, and recover computational chemistry jobs locally, through the agentless remote-compute MCP gateway, or through Slurm/PBS schedulers. Use for job scripts, dry runs, queue checks, job arrays, log monitoring, resume decisions, and durable execution of long-running calculations.
+description: Submit, monitor, and recover computational chemistry jobs locally, through the agentless remote-compute MCP gateway, or through Slurm/PBS/LSF schedulers. Use for job scripts, dry runs, queue checks, job arrays, log monitoring, resume decisions, and durable execution of long-running calculations.
 ---
 
 # HPC Submit
@@ -8,7 +8,7 @@ description: Submit, monitor, and recover computational chemistry jobs locally, 
 Use only after the engine skill's scientific preflight passed. Scheduler state (`COMPLETED`/`FAILED`) describes the process; only the engine's parser decides whether the calculation succeeded.
 
 This is the scheduler gate for every engine, not a VASP-specific helper. Whenever
-an engine or workflow needs a Slurm/PBS/local batch script (VASP, CP2K,
+an engine or workflow needs a Slurm/PBS/LSF/local batch script (VASP, CP2K,
 Gaussian, LAMMPS, DeePMD, phonopy arrays, GROMACS if present, or post-processing
 jobs), enter this skill before drafting the script and read the target
 `~/.cluster-agents.md`.
@@ -21,6 +21,13 @@ ID alongside the job ID, heartbeat while monitoring long work, and run
 uses `check_pre_submit.py`, register an accepted `cluster-guide-read` artifact in the
 engine/HPC task inputs after reading the target `~/.cluster-agents.md`; this is the
 machine-checkable evidence that the site guide was consulted.
+
+For agentless submission approvals bound to a staging manifest, do not combine staging
+and submission behind one `expensive_hpc_submission` task approval. That approval cannot
+exist until staging returns the manifest, while `claim_task.py` cannot claim a task whose
+approval is missing. Use two sequential tasks: a no-submission staging task with
+`approval: none`, followed by a submission/monitoring task that depends on the accepted
+staging task and validated `job-record`, and requires the exact manifest-bound approval.
 
 ## Know the cluster first (three-tier discovery)
 
@@ -41,12 +48,12 @@ If `~/.cluster-agents.md` is absent or incomplete, ask the user and probe (`sinf
 | new cluster / missing environment fact / writing the remote `~/.cluster-agents.md` | `references/cluster-guide-template.md` + ask the user |
 | local Agent -> remote execution with no Agent installed on the server | `remote-compute` + `procedures/research-orchestrator/references/remote-execution.md` |
 | need a persistent remote shell — stateful commands, survives disconnects, faithful output capture | use the `rsess` skill to open a session; then `rsess run`/`rsess peek` for all remote work |
-| writing a job script (Slurm/PBS), job arrays, command translation, monitoring patterns, remote workspace setup | `references/running.md` |
+| writing a job script (Slurm/PBS/LSF), job arrays, command translation, monitoring patterns, remote workspace setup | `references/running.md` |
 | wait for a job to finish when chaining stages (without false positives from a transient `squeue` hiccup) | `scripts/wait_for_job.sh` — confirms a terminal state via `sacct`; exit 0 only on COMPLETED, then still gate on the engine parser |
 | execution-side preflight; what to record at submission | `references/validation.md` |
 | pending forever, OOM-kill, TIMEOUT, node failures, module/MPI problems, corrupted transfers, lost session output | `references/errors.md` |
 | working examples to copy and adapt | `examples/` |
-| not covered locally (Slurm/PBS docs, reason codes) | `references/resources.md` |
+| not covered locally (Slurm/PBS/LSF docs, reason codes) | `references/resources.md` |
 
 ## Hard guardrails
 

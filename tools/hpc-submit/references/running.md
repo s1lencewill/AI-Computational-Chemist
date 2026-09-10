@@ -1,6 +1,6 @@
 # Running Jobs: Scheduler Templates and Command Reference
 
-> Load this when: writing a job script (Slurm/PBS), translating scheduler commands, or setting up job arrays and monitoring.
+> Load this when: writing a job script (Slurm/PBS/LSF), translating scheduler commands, or setting up job arrays and monitoring.
 
 Adapt partition/queue names, module names, and MPI launchers to the actual cluster — these vary everywhere and must be recorded in that cluster's `~/.cluster-agents.md` once learned.
 
@@ -88,16 +88,35 @@ cd "$PBS_O_WORKDIR"
 mpirun vasp_std
 ```
 
+## LSF equivalent header
+
+```bash
+#!/bin/bash
+#BSUB -J vasp-relax
+#BSUB -q <queue>
+#BSUB -n 48
+#BSUB -W 24:00
+#BSUB -oo %J.out
+#BSUB -eo %J.err
+
+cd "$LS_SUBCWD"
+mpirun -np "$LSB_DJOB_NUMPROC" vasp_std
+```
+
+Submit an LSF script with `bsub < job.lsf`; its acknowledgement normally contains
+`Job <ID>`. Queue names, memory syntax, span/host constraints, launchers, and runtime
+limits remain site-specific and come from `~/.cluster-agents.md`.
+
 ## Command translation table
 
-| Action | Slurm | PBS |
-|---|---|---|
-| submit | `sbatch job.sh` | `qsub job.sh` |
-| queue (mine) | `squeue -u $USER` | `qstat -u $USER` |
-| job detail | `scontrol show job ID` | `qstat -f ID` |
-| history/exit code | `sacct -j ID --format=JobID,State,Elapsed,ExitCode,MaxRSS` | `tracejob ID` |
-| cancel | `scancel ID` | `qdel ID` |
-| hold/release | `scontrol hold/release ID` | `qhold/qrls ID` |
+| Action | Slurm | PBS | LSF |
+|---|---|---|---|
+| submit | `sbatch job.sh` | `qsub job.sh` | `bsub < job.lsf` |
+| queue (mine) | `squeue -u $USER` | `qstat -u $USER` | `bjobs` |
+| job detail | `scontrol show job ID` | `qstat -f ID` | `bjobs -l ID` |
+| history/exit code | `sacct -j ID --format=JobID,State,Elapsed,ExitCode,MaxRSS` | `tracejob ID` | `bhist -l ID` |
+| cancel | `scancel ID` | `qdel ID` | `bkill ID` |
+| hold/release | `scontrol hold/release ID` | `qhold/qrls ID` | `bstop` / `bresume` |
 
 ## Monitoring patterns
 
@@ -119,8 +138,11 @@ mpirun vasp_std
 3. Ensure a modern Python per the remote `~/.cluster-agents.md` Python recipe (e.g. load conda/uv, or create an agent env and `pip/uv install` what the scripts need, when allowed). Never assume the system interpreter is recent. Repo helper scripts with third-party deps run via `uv run` (inline PEP 723) — but **compute nodes are usually offline**: point `UV_CACHE_DIR` at a shared filesystem and **warm each script's env once on the login node** (just run it once where there is connectivity — first use populates the cache), then jobs run with `uv run --offline` and fetch nothing. Without a warmed cache, a first-ever `uv run` inside a batch job on an air-gapped node will hang trying to reach the index. uv is preferred (point it at a PyPI mirror via `UV_DEFAULT_INDEX` if the default index is slow); as a fallback, prepare a **conda/mamba** env that has the deps and run the scripts with its `python` — use it when a package installs more reliably from conda-forge (ovito has its own channel) or uv/PyPI is blocked. Index/channel mirror URLs come from `~/.cluster-agents.md`.
 4. Every stage then runs: local scientific gates -> hash-verified stage -> recorded
    approval + active lease -> submit -> scheduler status -> engine parser -> scientific
-   validation. Record the manifest hash, remote target/job ID, approval, scheduler job
-   ID, and retrieved artifact hashes in `.research/`.
+   validation. For manifest-bound approval, represent staging and submission as two
+   sequential `.research/` tasks: staging has `approval: none`; submission depends on
+   the accepted staging task/job record and requires `expensive_hpc_submission`.
+   Record the manifest hash, remote target/job ID, approval, scheduler job ID, and
+   retrieved artifact hashes in `.research/`.
 
 ## Watcher idiom (chaining stages without polling by hand)
 

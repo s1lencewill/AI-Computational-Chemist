@@ -6,6 +6,8 @@
 
 - Python is 3.11 or newer; run `python -m unittest discover -s
   tools/remote-compute/scripts -p 'test_*.py'`.
+- Scheduler status tests cover Slurm, PBS, and wrapped LSF states; `UNKNOWN` remains
+  non-terminal rather than being guessed as success.
 - The private config passes `remote_compute_mcp.py --check-config`.
 - `ssh -o BatchMode=yes <alias> true` succeeds and strict host-key checking uses the
   expected fingerprint.
@@ -18,7 +20,7 @@
 Keep submit/cancel disabled while verifying:
 
 - `compute_list_targets` reveals aliases and policy only, not physical connection data;
-- `compute_probe_target` reports the expected Linux host and scheduler command;
+- `compute_probe_target` reports the expected Linux host and configured Slurm/PBS/LSF command;
 - `compute_read_cluster_guide` returns the expected size/hash and current operating guide;
 - a missing alias, path traversal, symlink, oversized bundle, or path outside a local
   root fails before mutation;

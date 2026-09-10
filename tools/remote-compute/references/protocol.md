@@ -53,9 +53,23 @@ exact staged `manifest_sha256`, preventing a valid approval from authorizing dif
 inputs. The Agent remains responsible for asking the human before recording that
 decision and invoking the mutating tool.
 
+In `.research/`, immutable staging and approved submission should be separate sequential
+tasks. This avoids a dependency cycle between `claim_task.py` readiness and an
+`expensive_hpc_submission` decision that cannot be bound until staging produces the
+manifest hash.
+
 `compute_cancel_job` performs the same local decision verification with a distinct
 cancellation approval type and requires the decision's `scheduler_job_id` to match the
 requested job. A submission approval must not be reused as cancellation authority.
+
+Scheduler adapters are deliberately narrow: Slurm uses `sbatch`/`sacct`/`scancel`,
+PBS uses `qsub`/`qstat`/`qdel`, and LSF uses `bsub`/`bjobs` (falling back to `bhist`)
+and `bkill`. LSF submission accepts only the staged script on standard input and parses
+the numeric job ID from the canonical `Job <ID>` acknowledgement.
+
+`compute_get_status` returns both `raw_status` and normalized `scheduler_state` plus a
+boolean `terminal`. Normalization tolerates wrapped LSF `Status <DONE>` output. These
+fields describe only scheduler/process state and never replace the engine parser.
 
 Downloads are two-step. First obtain the server-side size/hash with
 `compute_stat_artifact`; then pass that hash to `compute_fetch_artifact`. The download
@@ -65,6 +79,8 @@ Existing local files are never overwritten.
 Before stat, bounded log reads, or download, the gateway requires a regular non-symlink
 file whose resolved path remains inside the selected remote job directory. This blocks
 a job-created link from turning an artifact request into a read elsewhere on the host.
+The check uses POSIX-compatible `test` operands prefixed with `./`; it does not rely on
+the nonportable `test --` extension found missing on some HPC login shells.
 
 ## Path and command policy
 

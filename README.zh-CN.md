@@ -31,7 +31,7 @@ Windows 工作站
           | OpenSSH/SCP：只传输受限文件，执行网关生成的固定操作
           v
 Linux 计算服务器
-  SSH + GNU 工具 + Slurm/PBS + 科学计算软件
+  SSH + GNU 工具 + Slurm/PBS/LSF + 科学计算软件
   不安装 Agent，不运行 MCP 服务，不保存模型 API Key
 ```
 
@@ -54,7 +54,7 @@ Skill 保存科研知识和软件操作规则，本地 MCP 网关提供受限的
 | 场景 | 使用方式 | 服务器安装 Agent？ |
 |---|---|---:|
 | Agent 和计算软件在同一台机器 | 计算引擎 Skill + `hpc-submit` | 已在本地 |
-| 从 Windows 下发普通 SSH/Slurm/PBS 任务 | `remote-compute` + `hpc-submit` | 否 |
+| 从 Windows 下发普通 SSH/Slurm/PBS/LSF 任务 | `remote-compute` + `hpc-submit` | 否 |
 | 交互排错需要持续的工作目录、环境变量或 `tmux` | `rsess` + `hpc-submit` | 否 |
 | 机构明确选择在集群部署 Agent | 计算引擎 Skill + HPC Skill | 是 |
 
@@ -178,6 +178,11 @@ mcp__aicc-compute__compute_fetch_artifact
 `compute_submit_job` 会检查决策 ID、任务 ID、审批类型和清单哈希是否完全一致。
 已经被替代的审批或不绑定输入文件的通用审批不能提交任务。
 
+启用 `.research/` 租约时，应把不可变暂存和正式提交拆成两个串行任务。暂存任务使用
+`approval: none` 并产出已验证的清单/作业记录；提交任务依赖该记录，并要求绑定准确
+清单哈希的 `expensive_hpc_submission` 审批。这样不会形成“审批需要清单、暂存任务又
+因缺少审批而无法领取”的循环依赖。
+
 取消任务需要另一条 `remote_job_cancellation` 审批，并绑定准确的
 `scheduler_job_id`。提交前，网关还会在远端创建防重复标记。即使 SSH 回包中断，
 Agent 也不会自动重复提交昂贵任务。
@@ -245,7 +250,7 @@ tools/
   phonopy/ catmap/ lobster/  声子、微观动力学与成键分析
   multiwfn/ vaspkit/ ovito/  分析、后处理和可视化
   hpc-submit/                调度脚本、监控和恢复
-  remote-compute/            本地 MCP -> 无 Agent 的 SSH/Slurm/PBS 执行
+  remote-compute/            本地 MCP -> 无 Agent 的 SSH/Slurm/PBS/LSF 执行
   rsess/                     持久交互式远程 Shell
   report/                    报告与审稿回复材料生成
 benchmark/                   审稿意见复现案例与评测结果
@@ -310,10 +315,11 @@ Skill 结构、本地网关逻辑、MCP 握手与工具发现、Windows 命令�
 
 ```bash
 python -m unittest discover -s tools/remote-compute/scripts -p "test_*.py"
+python -m unittest discover -s tools/gaussian/scripts -p "test_*.py"
 python procedures/research-orchestrator/scripts/smoke_tests.py
 ```
 
-第二条命令需要 PyYAML，也可以在已经提供该依赖的环境中运行。
+第三条命令需要 PyYAML，也可以在已经提供该依赖的环境中运行。
 
 ## 设计原则
 

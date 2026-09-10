@@ -11,11 +11,13 @@
 | existing remote job directory | duplicate job ID or uncertain prior stage | Inspect it, reconcile provenance, then use a new job ID; do not overwrite. |
 | `.incoming-*` remains | transfer/checksum/finalize was interrupted | Inspect it manually under site policy; it is never submitted and the gateway will not reuse it. |
 | manifest or checksum-list changed | staged content changed after receipt | Stop and restage under a new job ID after diagnosing the change. |
-| `sbatch`/`qsub` missing | wrong login environment or target policy | Read the cluster guide; confirm modules/path without inventing site commands. |
+| `sbatch`/`qsub`/`bsub` missing | wrong login environment or target policy | Read the cluster guide; confirm modules/path without inventing site commands. |
+| login-shell output contains `conda deactivate` warnings | site or user login initialization calls Conda before shell initialization | If scheduler/engine commands require the login profile, keep `loginShell: true`, treat the warning as diagnostic noise, and fix the remote profile separately; use `false` only after probing a complete non-login PATH. |
 | scheduler returned invalid job ID | warning/banner mixed with command output | Inspect raw SSH behavior and site wrappers; do not guess or fabricate an ID. |
 | status missing/unknown | accounting delay, purged history, SSH outage | Query again later and reconcile logs/accounting; never resubmit solely from absence. |
 | artifact hash mismatch | file changed, incomplete transfer, or wrong expected hash | Delete only the gateway-created partial (automatic), restat remotely, and diagnose. |
 | destination exists | overwrite protection | Choose a new approved destination or obtain separate manual overwrite authorization. |
+| artifact boundary check reports `test: --: binary operator expected` | target `/bin/sh` implements POSIX `test` without a `--` extension | Use a gateway version that prefixes validated relative paths with `./` and invokes portable `test -f` / `test ! -L`; do not weaken the realpath boundary check. |
 
 Do not solve a gateway rejection by adding a raw-shell tool, disabling strict host-key
 checking, permitting arbitrary paths, or setting submission/cancellation globally true.

@@ -13,7 +13,8 @@ Remote prerequisites:
 - non-interactive OpenSSH access through a tested alias;
 - POSIX `sh` plus GNU-compatible `sha256sum`, `stat`, `find`, `realpath`, `tail`, and
   `mv`;
-- Slurm (`sbatch`, `sacct`, `scancel`) or PBS (`qsub`, `qstat`, `qdel`);
+- Slurm (`sbatch`, `sacct`, `scancel`), PBS (`qsub`, `qstat`, `qdel`), or
+  LSF (`bsub`, `bjobs`/`bhist`, `bkill`);
 - the computational codes and environment described by `~/.cluster-agents.md`.
 
 The current implementation targets Python 3.11 or newer on Windows/Linux/macOS. On the
@@ -30,6 +31,13 @@ C:\Users\<USER>\.dsh\remote-compute.private.json
 
 Replace placeholders locally. Do not commit the resulting file. Start with
 `submitEnabled` and `cancelEnabled` false.
+
+`submitEnabled` is a persistent target-level capability switch, not a per-job approval.
+Changing it to `true` requires an explicit operator policy decision because later
+sessions retain that capability. Even when enabled, every submission still needs an
+unsuperseded user approval bound to the exact staged manifest SHA-256. Keep
+`cancelEnabled` independent and false until cancellation has been separately tested and
+authorized.
 
 Validate without connecting:
 
@@ -52,6 +60,15 @@ by this target; keep it as narrow as the projects that may actually submit. If o
 it defaults to `allowedUploadRoots` for backward compatibility. `remoteRoot` is the only
 remote tree the gateway can address and must be an absolute portable POSIX path without
 spaces.
+
+`loginShell` defaults to `true`, which runs generated commands through `sh -lc` so
+site login initialization is available. Set it to `false` only when login startup is
+broken or noisy and the required scheduler and engine commands are already available
+to a non-login shell. Confirm that choice with the probe and cluster guide.
+Warnings printed by a login profile (for example, a stale `conda deactivate`) may be
+included ahead of the real command error. Diagnose the final failing command first; do
+not disable the login shell when it is what exposes `bsub`, `sbatch`, `qsub`, or the
+engine executable.
 
 ## DSH sci preset
 

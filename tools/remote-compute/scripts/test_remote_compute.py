@@ -11,7 +11,13 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from remote_compute_core import CommandResult, GatewayConfig, GatewayError, RemoteComputeGateway
+from remote_compute_core import (
+    CommandResult,
+    GatewayConfig,
+    GatewayError,
+    RemoteComputeGateway,
+    _normalize_scheduler_state,
+)
 
 
 PAYLOAD = b"validated artifact\n"
@@ -46,8 +52,12 @@ class FakeRunner:
             return CommandResult(0, json.dumps(self.manifest))
         if "sbatch --parsable" in command:
             return CommandResult(0, "12345;cluster-a\n")
+        if "bsub <" in command:
+            return CommandResult(0, "Job <67890> is submitted to queue <normal>.\n")
         if "sacct -n -P" in command:
             return CommandResult(0, "12345|COMPLETED|0:0|00:01:02|start|end\n")
+        if "bjobs -a -l" in command:
+            return CommandResult(0, "Job <67890>, Status <DO\n NE>, Exit Code <0>\n")
         if "tail -c" in command:
             return CommandResult(0, "calculation log tail\n")
         if "stat -c" in command and "sha256sum" in command:
@@ -135,6 +145,93 @@ class GatewayTests(unittest.TestCase):
         self.assertNotIn("ssh_alias", listed["targets"][0])
         self.assertNotIn("remote_root", listed["targets"][0])
 
+    def test_lsf_scheduler_and_non_login_shell(self) -> None:
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        target = raw["targets"].pop("test-slurm")
+        target.update(
+            {
+                "sshAlias": "test-lsf",
+                "scheduler": "lsf",
+                "loginShell": False,
+            }
+        )
+        raw["targets"]["test-lsf"] = target
+        self.config_path.write_text(json.dumps(raw), encoding="utf-8")
+
+        runner = FakeRunner()
+        runner.manifest.update(
+            {
+                "target": "test-lsf",
+                "scheduler": "lsf",
+                "submit_script": "submit.lsf",
+            }
+        )
+        gateway = RemoteComputeGateway(GatewayConfig.load(self.config_path), runner)
+        listed = gateway.list_targets()["targets"][0]
+        self.assertEqual(listed["scheduler"], "lsf")
+        self.assertFalse(listed["login_shell"])
+
+        job = self.project / "lsf-job"
+        job.mkdir()
+        (job / "submit.lsf").write_text("#!/bin/bash\necho test\n", encoding="utf-8")
+        (job / "input.in").write_text("input\n", encoding="utf-8")
+        staged = gateway.stage_job("test-lsf", "job-001", str(job), "submit.lsf")
+        runner.manifest_sha256 = staged["manifest_sha256"]
+        decisions_path = self.project / ".research" / "decisions.jsonl"
+        decisions = [json.loads(line) for line in decisions_path.read_text().splitlines()]
+        decisions[0]["manifest_sha256"] = staged["manifest_sha256"]
+        decisions_path.write_text(
+            "".join(json.dumps(row) + "\n" for row in decisions), encoding="utf-8"
+        )
+
+        submitted = gateway.submit_job(
+            "test-lsf",
+            "job-001",
+            staged["manifest_sha256"],
+            str(self.project),
+            "T004",
+            "D-HPC-001",
+            "expensive_hpc_submission",
+        )
+        self.assertEqual(submitted["scheduler_job_id"], "67890")
+        lsf_status = gateway.get_status("test-lsf", "67890")
+        self.assertEqual(lsf_status["scheduler_state"], "DONE")
+        self.assertTrue(lsf_status["terminal"])
+        self.assertTrue(any(call[-1].startswith("sh -c ") for call in runner.calls))
+        self.assertTrue(any("bsub < submit.lsf" in call[-1] for call in runner.calls))
+        self.assertTrue(any("bjobs -a -l 67890" in call[-1] for call in runner.calls))
+
+        cancelled = gateway.cancel_job(
+            "test-lsf",
+            "12345",
+            str(self.project),
+            "T004",
+            "D-CANCEL-001",
+            "remote_job_cancellation",
+            "operator request",
+        )
+        self.assertTrue(cancelled["cancelled"])
+        self.assertTrue(any("bkill 12345" in call[-1] for call in runner.calls))
+
+    def test_scheduler_state_normalization(self) -> None:
+        self.assertEqual(
+            _normalize_scheduler_state("slurm", "123|COMPLETED|0:0|00:01:00"),
+            ("COMPLETED", True),
+        )
+        self.assertEqual(
+            _normalize_scheduler_state("slurm", "123|RUNNING|0:0|00:00:03"),
+            ("RUNNING", False),
+        )
+        self.assertEqual(
+            _normalize_scheduler_state("pbs", "job_state = F\nExit_status = 0"),
+            ("F", True),
+        )
+        self.assertEqual(
+            _normalize_scheduler_state("lsf", "Job <1>, Status <DO\n NE>"),
+            ("DONE", True),
+        )
+        self.assertEqual(_normalize_scheduler_state("lsf", "unrecognized"), ("UNKNOWN", False))
+
     def test_paths_and_ids_fail_closed(self) -> None:
         outside = self.root / "outside"
         outside.mkdir()
@@ -201,6 +298,14 @@ class GatewayTests(unittest.TestCase):
         self.assertTrue(
             any(call[0] == "ssh-fake" and "realpath -e" in call[-1] for call in self.runner.calls)
         )
+        boundary_calls = [
+            call[-1]
+            for call in self.runner.calls
+            if call[0] == "ssh-fake" and "realpath -e" in call[-1]
+        ]
+        self.assertTrue(any("candidate=./results/result.dat" in call for call in boundary_calls))
+        self.assertTrue(all("test -f --" not in call for call in boundary_calls))
+        self.assertTrue(all("test ! -L --" not in call for call in boundary_calls))
         with self.assertRaises(GatewayError):
             self.gateway.fetch_artifact(
                 "test-slurm", "job-001", "results/result.dat", str(self.download), digest

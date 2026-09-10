@@ -16,6 +16,15 @@ credential is installed there.
 - The task's owner directory is protected by an active lease when
   `execution_policy.requires_claim` is true.
 
+Manifest-bound submission needs two sequential task nodes. The staging node has
+`approval: none`, may hold the owner-directory lease while calling
+`compute_stage_job`, and produces the validated `job-record`. After it is accepted and
+its lease released, the submission/monitoring node depends on that record, requires
+`approval: expensive_hpc_submission`, and is claimed only after the user's decision is
+bound to the exact `manifest_sha256`. Combining both phases under the submission
+approval creates a readiness cycle: the approval needs a manifest that the unready task
+has not been allowed to stage.
+
 ## Job-record artifact
 
 Register the staging receipt as a project-local JSON/Markdown artifact and index it in
@@ -54,7 +63,8 @@ uses a separate `approval_type: remote_job_cancellation` decision bound to the e
 ## Monitoring and recovery
 
 - Poll the scheduler at meaningful intervals; do not hold an SSH session open for a
-  scheduler-managed job.
+  scheduler-managed job. Persist the normalized scheduler state plus the raw scheduler
+  response; wrapped LSF long output, for example, may split `DONE` across lines.
 - Heartbeat the AICC execution lease while an owned monitoring turn is active. A closed
   local Agent does not stop the scheduler job; reconcile the lease and scheduler state
   on resume.

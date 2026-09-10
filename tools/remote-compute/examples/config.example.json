@@ -7,6 +7,7 @@
     "example-slurm": {
       "sshAlias": "example-slurm",
       "scheduler": "slurm",
+      "loginShell": true,
       "remoteRoot": "/scratch/REPLACE_USER/aicc-jobs",
       "allowedUploadRoots": [
         "G:\\research\\prepared-jobs"

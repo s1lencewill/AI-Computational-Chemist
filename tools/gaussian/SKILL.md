@@ -29,7 +29,7 @@ Job types: SP, Opt, Freq, Opt+Freq, TS search, IRC, scans, solvent models, count
 | GaussView model setup, fragments, `.chk`/`.fchk`, quick visualization | `references/gaussview.md` |
 | Multiwfn wavefunction analysis: charges, spin density, MOs/NTOs, ESP/ELF/NCI/IRI, spectra | `tools/multiwfn/SKILL.md`; interpretation: `knowledge/electronic-structure.md`, `knowledge/scientific-visualization.md` |
 | job error-terminated (link number) or generic opt won't converge | `references/errors.md`; for exact log parsing use `uv run scripts/parse_gaussian.py` |
-| run finished — termination, imaginary modes, S², energy discipline | `uv run scripts/parse_gaussian.py`, then `references/validation.md` |
+| run finished — termination, imaginary modes, S², energy discipline | `uv run scripts/parse_gaussian.py JOB.log` (`--json` for state artifacts), then `references/validation.md` |
 | working examples to copy and adapt | `examples/` |
 | not covered locally (keyword docs, basis sets, community error guides) | `references/resources.md` |
 
@@ -38,7 +38,7 @@ Job types: SP, Opt, Freq, Opt+Freq, TS search, IRC, scans, solvent models, count
 1. Decide the scientific quantity before choosing Gaussian keywords; consult `knowledge/molecular-qc-practical-rules.md` when the issue is code-agnostic.
 2. Build the route from `running.md` plus the relevant topic reference. State charge/multiplicity origin.
 3. Submit via `hpc-submit` (single-node unless a site-specific Linda setup is explicitly approved).
-4. Validate: `uv run scripts/parse_gaussian.py JOB.log`; rules in `validation.md`. On error → exact link/message in `errors.md`, then the topic reference.
+4. Validate: `uv run scripts/parse_gaussian.py JOB.log`; use `--json` when registering a machine-readable parser result. Rules are in `validation.md`. On error → exact link/message in `errors.md`, then the topic reference.
 5. Extract energies and properties only after validation, using `energy-thermochemistry.md` or `properties-utilities.md`.
 6. For post-processing beyond Gaussian's own output, hand off validated `.log`/`.fchk`/cube files to `tools/multiwfn/`.
 
